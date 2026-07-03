@@ -24,4 +24,4 @@ cargo fmt --all
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
-See `docs/ferralloc-vision.md` and `docs/v0.1-plan.md` for the project thesis and implementation plan.
+See `ROADMAP.md` for the project thesis, current scope, architecture, and follow-up plan.

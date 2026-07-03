@@ -6,6 +6,8 @@ Ferralloc is a Rust-native allocator project. The goal is not to port an existin
 
 Current milestone: a global-lock allocator that can run real Rust programs and survive randomized allocation traces.
 
+Use `ROADMAP.md` as the source of truth for project thesis, current scope, architecture, testing direction, and later milestones.
+
 ## User Preferences
 
 - Prefer entity-based architecture and design.
