@@ -79,7 +79,7 @@ If this invariant is wrong, later features like thread-local heaps and remote fr
 GlobalAlloc
   -> Ferralloc
       -> Allocator
-          -> State
+          -> Heap
               -> SpanMap
               -> SpanTable
               -> Span
@@ -87,14 +87,14 @@ GlobalAlloc
               -> OsMemory
 ```
 
-Use one global lock around `State`.
+Use one global lock around `Heap`.
 
 ## Entity Responsibilities
 
 ```text
 Ferralloc    owns the Rust GlobalAlloc boundary
 Allocator    owns the core public allocator API
-State        owns allocation policy and global lock-protected state
+Heap         owns allocation policy and global lock-protected allocator data
 LayoutSpec   owns normalized layout semantics
 SizeClasses  owns size-class selection
 OsMemory     owns mmap and munmap

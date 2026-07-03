@@ -9,7 +9,7 @@ use crate::{
     span_table::SpanTable,
 };
 
-pub(crate) struct State {
+pub(crate) struct Heap {
     memory: OsMemory,
     classes: SizeClasses,
     spans: SpanTable,
@@ -17,9 +17,9 @@ pub(crate) struct State {
     active: [SpanSlot; SizeClasses::COUNT],
 }
 
-unsafe impl Send for State {}
+unsafe impl Send for Heap {}
 
-impl State {
+impl Heap {
     pub(crate) const fn new() -> Self {
         Self {
             memory: OsMemory::new(),

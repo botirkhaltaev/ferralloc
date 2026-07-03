@@ -16,6 +16,7 @@ Use `ROADMAP.md` as the source of truth for project thesis, current scope, archi
 - Keep code and architecture simple wherever possible.
 - Write idiomatic, performance-aware Rust without premature optimization.
 - Introduce abstractions only when they reduce complexity or clarify invariants.
+- Avoid callback-style helper patterns for ordinary control flow; prefer direct, explicit calls.
 
 ## v0.1 Scope
 
@@ -36,7 +37,7 @@ Use this first:
 ```text
 GlobalAlloc
   -> Allocator
-      -> State
+      -> Heap
       -> SpanMap
       -> SpanTable
       -> Span
@@ -44,13 +45,13 @@ GlobalAlloc
       -> OsMemory
 ```
 
-Use one global lock around `State`.
+Use one global lock around `Heap`.
 
 ## Rust Rules
 
 - Use `#![deny(unsafe_op_in_unsafe_fn)]`.
 - Keep unsafe code small, explicit, and local.
-- Prefer methods on `Allocator`, `State`, `Span`, `SpanMap`, `SpanTable`, `FreeList`, `OsMemory`, and `SizeClasses`.
+- Prefer methods on `Allocator`, `Heap`, `Span`, `SpanMap`, `SpanTable`, `FreeList`, `OsMemory`, and `SizeClasses`.
 - Avoid allocator-internal `Vec`, `Box`, `HashMap`, `String`, formatting, or panic paths unless recursion risk is addressed.
 - Abort on invalid frees in v0.1.
 - Do not unwind across allocator boundaries.
