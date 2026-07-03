@@ -121,7 +121,7 @@ impl L1Table {
             .and_then(|entry| entry.table())
     }
 
-    fn ensure(&mut self, index: L1Index, memory: &OsMemory) -> Option<NonNull<L2Table>> {
+    fn get_or_create(&mut self, index: L1Index, memory: &OsMemory) -> Option<NonNull<L2Table>> {
         let entry = self.entries.get_mut(index.get())?;
 
         if let Some(table) = entry.table() {
@@ -225,10 +225,6 @@ impl MapEntry {
         self.0 == 0
     }
 
-    fn contains(self, entry: PageEntry) -> bool {
-        Self::occupied(entry).is_some_and(|occupied| self.0 == occupied.0)
-    }
-
     fn page(self) -> Option<PageEntry> {
         if self.is_empty() {
             return None;
@@ -265,7 +261,7 @@ impl PageMap {
         let (l1_index, l2_index) = Page::containing(ptr).indexes()?;
         let table = self.l1()?.get(l1_index)?;
 
-        // SAFETY: L1Entry only stores non-null L2 table pointers allocated by L1Table::ensure.
+        // SAFETY: L1Entry only stores non-null L2 table pointers allocated by L1Table::get_or_create.
         let entry = unsafe { table.as_ref() }.get(l2_index)?;
         entry.page()
     }
@@ -276,40 +272,16 @@ impl PageMap {
         entry: PageEntry,
         memory: &OsMemory,
     ) -> Result<(), PageMapError> {
-        for page in range.pages() {
-            page.indexes().ok_or(PageMapError::InvalidRange)?;
-        }
-
-        for page in range.pages() {
-            let (l1_index, l2_index) = page.indexes().ok_or(PageMapError::InvalidRange)?;
-            let mut table = self
-                .l1_or_init(memory)?
-                .ensure(l1_index, memory)
-                .ok_or(PageMapError::MetadataAllocFailed)?;
-
-            // SAFETY: table is a non-null L2 table pointer allocated by L1Table::ensure.
-            let existing = unsafe { table.as_mut() }
-                .get(l2_index)
-                .ok_or(PageMapError::InvalidRange)?;
-
-            if !existing.is_empty() && !existing.contains(entry) {
-                return Err(PageMapError::Overlap);
-            }
-        }
-
         let occupied = MapEntry::occupied(entry).ok_or(PageMapError::InvalidRange)?;
 
+        self.validate_insert(range)?;
+        self.prepare_insert(range, memory)?;
+
         for page in range.pages() {
-            let (l1_index, l2_index) = page.indexes().ok_or(PageMapError::InvalidRange)?;
-            let Some(mut table) = self.l1().and_then(|l1| l1.get(l1_index)) else {
-                return Err(PageMapError::MetadataAllocFailed);
-            };
+            if let Err(error) = self.commit_page(page, occupied) {
+                self.remove(range);
 
-            // SAFETY: table was allocated or found during the validation pass above.
-            let inserted = unsafe { table.as_mut() }.set(l2_index, occupied);
-
-            if !inserted {
-                return Err(PageMapError::InvalidRange);
+                return Err(error);
             }
         }
 
@@ -325,7 +297,7 @@ impl PageMap {
                 continue;
             };
 
-            // SAFETY: L1Entry only stores non-null L2 table pointers allocated by L1Table::ensure.
+            // SAFETY: L1Entry only stores non-null L2 table pointers allocated by L1Table::get_or_create.
             let cleared = unsafe { table.as_mut() }.clear(l2_index);
             debug_assert!(cleared, "validated L2 index should be clearable");
         }
@@ -354,6 +326,69 @@ impl PageMap {
         }
 
         self.l1_mut().ok_or(PageMapError::MetadataAllocFailed)
+    }
+
+    fn validate_insert(&self, range: PageRange) -> Result<(), PageMapError> {
+        for page in range.pages() {
+            let existing = self.entry_for_page(page)?;
+
+            if existing.is_some_and(|existing| !existing.is_empty()) {
+                return Err(PageMapError::Overlap);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn entry_for_page(&self, page: Page) -> Result<Option<MapEntry>, PageMapError> {
+        let (l1_index, l2_index) = page.indexes().ok_or(PageMapError::InvalidRange)?;
+        let Some(table) = self.l1().and_then(|l1| l1.get(l1_index)) else {
+            return Ok(None);
+        };
+
+        // SAFETY: L1Entry only stores non-null L2 table pointers allocated by L1Table::get_or_create.
+        unsafe { table.as_ref() }
+            .get(l2_index)
+            .map(Some)
+            .ok_or(PageMapError::InvalidRange)
+    }
+
+    fn prepare_insert(&mut self, range: PageRange, memory: &OsMemory) -> Result<(), PageMapError> {
+        for page in range.pages() {
+            let (l1_index, _) = page.indexes().ok_or(PageMapError::InvalidRange)?;
+            if self
+                .l1_or_init(memory)?
+                .get_or_create(l1_index, memory)
+                .is_none()
+            {
+                return Err(PageMapError::MetadataAllocFailed);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn commit_page(&mut self, page: Page, entry: MapEntry) -> Result<(), PageMapError> {
+        let (l1_index, l2_index) = page.indexes().ok_or(PageMapError::InvalidRange)?;
+        let Some(mut table) = self.l1_mut().and_then(|l1| l1.get(l1_index)) else {
+            return Err(PageMapError::MetadataAllocFailed);
+        };
+
+        // SAFETY: table was allocated or found during prepare_insert.
+        if unsafe { table.as_mut() }.set(l2_index, entry) {
+            Ok(())
+        } else {
+            Err(PageMapError::InvalidRange)
+        }
+    }
+
+    #[cfg(test)]
+    fn has_l2_table(&self, ptr: NonNull<u8>) -> bool {
+        let Some((l1_index, _)) = Page::containing(ptr).indexes() else {
+            return false;
+        };
+
+        self.l1().and_then(|l1| l1.get(l1_index)).is_some()
     }
 }
 
@@ -533,6 +568,54 @@ mod tests {
             Err(PageMapError::Overlap)
         );
         assert_eq!(map.get(second), Some(run(11)));
+    }
+
+    #[test]
+    fn page_map_insert_range_rejects_existing_same_entry() {
+        let memory = OsMemory::new();
+        let mapping = TestMapping::new(&memory, PAGE_SIZE);
+        let mut map = PageMap::new();
+        let range = mapping.page_range();
+
+        assert!(map.insert(range, run(13), &memory).is_ok());
+        assert_eq!(
+            map.insert(range, run(13), &memory),
+            Err(PageMapError::Overlap)
+        );
+        assert_eq!(map.get(mapping.base()), Some(run(13)));
+    }
+
+    #[test]
+    fn page_map_overlap_validation_does_not_allocate_empty_l2_tables() {
+        let memory = OsMemory::new();
+        let mapping = TestMapping::new(&memory, (L2_ENTRIES * 2 + 2) * PAGE_SIZE);
+        let mut map = PageMap::new();
+        let (_, base_l2) = Page::containing(mapping.base()).indexes().unwrap();
+        let pages_to_next_l2 = L2_ENTRIES - base_l2.get();
+        let overlap = mapping.ptr_at(pages_to_next_l2 * PAGE_SIZE);
+
+        assert!(
+            map.insert(
+                PageRange::new(overlap, PAGE_SIZE).unwrap(),
+                run(21),
+                &memory
+            )
+            .is_ok()
+        );
+        assert!(!map.has_l2_table(mapping.base()));
+
+        assert_eq!(
+            map.insert(
+                PageRange::new(mapping.base(), (pages_to_next_l2 + 1) * PAGE_SIZE).unwrap(),
+                run(22),
+                &memory,
+            ),
+            Err(PageMapError::Overlap)
+        );
+
+        assert!(!map.has_l2_table(mapping.base()));
+        assert_eq!(map.get(mapping.base()), None);
+        assert_eq!(map.get(overlap), Some(run(21)));
     }
 
     #[test]
