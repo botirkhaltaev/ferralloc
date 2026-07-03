@@ -11,7 +11,7 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/botirk38/ferralloc"
+repository = "https://github.com/botirkhaltaev/ferralloc"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
