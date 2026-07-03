@@ -11,4 +11,37 @@ workspace = true
 
 [dependencies]
 ferralloc = { path = "../ferralloc" }
-ferralloc-test-support = { path = "../ferralloc-test-support" }
+mimalloc = "0.1"
+snmalloc-rs = "0.3"
+tikv-jemallocator = "0.6"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "explicit"
+harness = false
+
+[[bench]]
+name = "threaded"
+harness = false
+
+[[bench]]
+name = "global_system"
+harness = false
+
+[[bench]]
+name = "global_ferralloc"
+harness = false
+
+[[bench]]
+name = "global_mimalloc"
+harness = false
+
+[[bench]]
+name = "global_jemalloc"
+harness = false
+
+[[bench]]
+name = "global_snmalloc"
+harness = false

@@ -117,7 +117,7 @@ crates/ferralloc-test-support
   reusable future test machinery
 
 crates/ferralloc-bench
-  future benchmark harness
+  Criterion and RSS benchmark suite
 ```
 
 ## Reference Lessons
