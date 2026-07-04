@@ -84,6 +84,7 @@ impl ExtentTable {
         extent: Extent,
     ) -> Result<ExtentId, ExtentTableError> {
         if reservation.id != extent.id() {
+            self.release(reservation);
             return Err(ExtentTableError::InvalidReservation);
         }
 
@@ -94,6 +95,7 @@ impl ExtentTable {
         if slot.insert(extent) {
             Ok(reservation.id)
         } else {
+            slot.release();
             Err(ExtentTableError::Occupied)
         }
     }
@@ -268,5 +270,57 @@ impl SlotState {
 
     const fn is_occupied(self) -> bool {
         self.0 == Self::OCCUPIED
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{
+        extent::{Extent, ExtentId},
+        layout::LayoutSpec,
+        os_memory::OsMemory,
+    };
+
+    use super::*;
+
+    fn reusable_extent(id: ExtentId) -> Extent {
+        let spec = LayoutSpec::from_size_align(65_536, 8).unwrap();
+        let len = spec.mapping_len(OsMemory::page_size()).unwrap();
+        let mapping = OsMemory::map(len).unwrap();
+
+        Extent::new(id, mapping, spec).unwrap()
+    }
+
+    #[test]
+    fn extent_table_insert_get_round_trip() {
+        let mut table = ExtentTable::new();
+        let reservation = table.reserve().unwrap();
+        let extent = reusable_extent(reservation.id());
+
+        let id = table.insert(reservation, extent).unwrap();
+        assert_eq!(table.get(id).unwrap().id(), id);
+
+        let extent = table.remove(id).unwrap();
+        assert_eq!(extent.id(), id);
+    }
+
+    #[test]
+    fn extent_table_invalid_insert_releases_reservation() {
+        let mut table = ExtentTable::new();
+        let reservation = table.reserve().unwrap();
+        let released = reservation.id();
+        let wrong_id = ExtentId::new(released.get() + 1).unwrap();
+        let extent = reusable_extent(wrong_id);
+
+        assert_eq!(
+            table.insert(reservation, extent),
+            Err(ExtentTableError::InvalidReservation)
+        );
+
+        let max_extents = u32::try_from(ExtentTable::MAX_EXTENTS).unwrap();
+        for expected in 1..max_extents {
+            assert_eq!(table.reserve().unwrap().id().get(), expected);
+        }
+        assert_eq!(table.reserve().unwrap().id(), released);
     }
 }

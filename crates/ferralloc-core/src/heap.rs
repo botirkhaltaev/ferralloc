@@ -307,3 +307,60 @@ impl Heap {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{extent::ExtentId, page_map::PageRange, run::RunId, size_class::SizeClasses};
+
+    use super::*;
+
+    fn reusable_run(id: RunId) -> Run {
+        let mapping = OsMemory::map(RUN_SIZE).unwrap();
+        let spec = LayoutSpec::from_size_align(64, 8).unwrap();
+        let class = SizeClasses::get(spec).unwrap();
+
+        Run::new(id, mapping, class)
+    }
+
+    fn reusable_extent(id: ExtentId) -> Extent {
+        let spec = LayoutSpec::from_size_align(65_536, 8).unwrap();
+        let len = spec.mapping_len(OsMemory::page_size()).unwrap();
+        let mapping = OsMemory::map(len).unwrap();
+
+        Extent::new(id, mapping, spec).unwrap()
+    }
+
+    #[test]
+    fn failed_run_page_publication_removes_table_entry() {
+        let mut heap = Heap::new();
+        let reservation = heap.runs.reserve().unwrap();
+        let id = reservation.id();
+        let run = reusable_run(id);
+        let range = run.range();
+        let page_range = PageRange::from_range(range).unwrap();
+        let existing = PageEntry::Run(RunId::new(900).unwrap());
+
+        heap.pages.insert(page_range, existing).unwrap();
+
+        assert_eq!(heap.insert_run(reservation, run), Err(()));
+        assert!(heap.runs.get(id).is_none());
+        assert_eq!(heap.pages.get(range.base()), Some(existing));
+    }
+
+    #[test]
+    fn failed_extent_page_publication_removes_table_entry() {
+        let mut heap = Heap::new();
+        let reservation = heap.extents.reserve().unwrap();
+        let id = reservation.id();
+        let extent = reusable_extent(id);
+        let range = extent.range();
+        let page_range = PageRange::from_range(range).unwrap();
+        let existing = PageEntry::Extent(ExtentId::new(900).unwrap());
+
+        heap.pages.insert(page_range, existing).unwrap();
+
+        assert_eq!(heap.insert_extent(reservation, extent), Err(()));
+        assert!(heap.extents.get(id).is_none());
+        assert_eq!(heap.pages.get(range.base()), Some(existing));
+    }
+}

@@ -72,7 +72,6 @@ impl RunTable {
         None
     }
 
-    #[cfg(test)]
     pub(crate) fn release(&mut self, reservation: RunReservation) {
         let Some(slot) = self.slot_mut(reservation.id) else {
             return;
@@ -87,6 +86,7 @@ impl RunTable {
         run: Run,
     ) -> Result<RunId, RunTableError> {
         if reservation.id != run.id() {
+            self.release(reservation);
             return Err(RunTableError::InvalidReservation);
         }
 
@@ -97,6 +97,7 @@ impl RunTable {
         if slot.insert(run) {
             Ok(reservation.id)
         } else {
+            slot.release();
             Err(RunTableError::Occupied)
         }
     }
@@ -228,7 +229,6 @@ impl RunSlot {
         true
     }
 
-    #[cfg(test)]
     fn release(&mut self) {
         if self.state.is_reserved() {
             self.state = SlotState::empty();
@@ -395,6 +395,26 @@ mod tests {
             table.insert(RunReservation { id }, run),
             Err(RunTableError::InvalidReservation)
         );
+    }
+
+    #[test]
+    fn run_table_invalid_insert_releases_reservation() {
+        let mut table = RunTable::new();
+        let reservation = table.reserve().unwrap();
+        let released = reservation.id();
+        let wrong_id = RunId::new(released.get() + 1).unwrap();
+        let run = reusable_run(wrong_id);
+
+        assert_eq!(
+            table.insert(reservation, run),
+            Err(RunTableError::InvalidReservation)
+        );
+
+        let max_runs = u32::try_from(RunTable::MAX_RUNS).unwrap();
+        for expected in 1..max_runs {
+            assert_eq!(table.reserve().unwrap().id().get(), expected);
+        }
+        assert_eq!(table.reserve().unwrap().id(), released);
     }
 
     #[test]
