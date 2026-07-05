@@ -5,7 +5,6 @@ use crate::{
     os_memory::OsMemory,
     run::{Run, RunId},
     size_class::SizeClass,
-    table_capacity::TableCapacity,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -28,11 +27,11 @@ impl RunReservation {
 pub(crate) struct RunTable {
     slots: Option<RunSlots>,
     next: u32,
-    capacity: TableCapacity,
+    capacity: u32,
 }
 
 impl RunTable {
-    pub(crate) const fn new(capacity: TableCapacity) -> Self {
+    pub(crate) const fn new(capacity: u32) -> Self {
         Self {
             slots: None,
             next: 0,
@@ -41,7 +40,10 @@ impl RunTable {
     }
 
     pub(crate) fn reserve(&mut self) -> Option<RunReservation> {
-        let capacity = self.capacity.get();
+        let capacity = usize::try_from(self.capacity).ok()?;
+        if capacity == 0 {
+            return None;
+        }
         let start = usize::try_from(self.next).ok()?;
 
         for offset in 0..capacity {
@@ -61,7 +63,7 @@ impl RunTable {
                     index.checked_add(1)?
                 };
                 self.next = u32::try_from(next).ok()?;
-                let id = RunId::new(u32::try_from(index).ok()?)?;
+                let id = RunId::from_index(u32::try_from(index).ok()?)?;
 
                 return Some(RunReservation { id });
             }
@@ -125,7 +127,7 @@ impl RunTable {
             let Some(ptr) = run.allocate(spec) else {
                 continue;
             };
-            let id = RunId::new(u32::try_from(index).ok()?)?;
+            let id = RunId::from_index(u32::try_from(index).ok()?)?;
 
             return Some((id, ptr));
         }
@@ -143,7 +145,7 @@ impl RunTable {
 
     fn slots_mut(&mut self) -> Option<&mut RunSlots> {
         if self.slots.is_none() {
-            self.slots = Some(RunSlots::new(self.capacity.get())?);
+            self.slots = Some(RunSlots::new(usize::try_from(self.capacity).ok()?)?);
         }
 
         self.slots.as_mut()
@@ -158,7 +160,7 @@ impl RunTable {
     }
 
     fn index(id: RunId) -> Option<usize> {
-        usize::try_from(id.get()).ok()
+        usize::try_from(id.index()).ok()
     }
 }
 
@@ -279,7 +281,9 @@ impl RunSlot {
 
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-struct SlotState(u8);
+struct SlotState {
+    raw: u8,
+}
 
 impl SlotState {
     const EMPTY: u8 = 0;
@@ -287,27 +291,31 @@ impl SlotState {
     const OCCUPIED: u8 = 2;
 
     const fn empty() -> Self {
-        Self(Self::EMPTY)
+        Self { raw: Self::EMPTY }
     }
 
     const fn reserved() -> Self {
-        Self(Self::RESERVED)
+        Self {
+            raw: Self::RESERVED,
+        }
     }
 
     const fn occupied() -> Self {
-        Self(Self::OCCUPIED)
+        Self {
+            raw: Self::OCCUPIED,
+        }
     }
 
     const fn is_empty(self) -> bool {
-        self.0 == Self::EMPTY
+        self.raw == Self::EMPTY
     }
 
     const fn is_reserved(self) -> bool {
-        self.0 == Self::RESERVED
+        self.raw == Self::RESERVED
     }
 
     const fn is_occupied(self) -> bool {
-        self.0 == Self::OCCUPIED
+        self.raw == Self::OCCUPIED
     }
 }
 
@@ -318,7 +326,6 @@ mod tests {
         os_memory::OsMemory,
         run::{RUN_SIZE, Run, RunId},
         size_class::SizeClasses,
-        table_capacity::TableCapacity,
     };
 
     use super::*;
@@ -332,23 +339,30 @@ mod tests {
     }
 
     fn table_with_capacity(capacity: usize) -> RunTable {
-        RunTable::new(TableCapacity::new(capacity).unwrap())
+        RunTable::new(u32::try_from(capacity).unwrap())
+    }
+
+    #[test]
+    fn run_table_zero_capacity_reserves_none() {
+        let mut table = RunTable::new(0);
+
+        assert_eq!(table.reserve(), None);
     }
 
     #[test]
     fn run_table_reserves_ids_from_zero() {
         let mut table = table_with_capacity(4);
 
-        assert_eq!(table.reserve().unwrap().id().get(), 0);
-        assert_eq!(table.reserve().unwrap().id().get(), 1);
+        assert_eq!(table.reserve().unwrap().id().index(), 0);
+        assert_eq!(table.reserve().unwrap().id().index(), 1);
     }
 
     #[test]
     fn run_table_respects_injected_capacity() {
         let mut table = table_with_capacity(2);
 
-        assert_eq!(table.reserve().unwrap().id().get(), 0);
-        assert_eq!(table.reserve().unwrap().id().get(), 1);
+        assert_eq!(table.reserve().unwrap().id().index(), 0);
+        assert_eq!(table.reserve().unwrap().id().index(), 1);
         assert_eq!(table.reserve(), None);
     }
 
@@ -360,9 +374,9 @@ mod tests {
 
         table.release(first);
 
-        assert_eq!(second.id().get(), 1);
+        assert_eq!(second.id().index(), 1);
         for expected in 2..4 {
-            assert_eq!(table.reserve().unwrap().id().get(), expected);
+            assert_eq!(table.reserve().unwrap().id().index(), expected);
         }
         assert_eq!(table.reserve().unwrap().id(), first.id());
     }
@@ -399,7 +413,7 @@ mod tests {
     #[test]
     fn run_table_rejects_unreserved_insert() {
         let mut table = table_with_capacity(4);
-        let id = RunId::new(0).unwrap();
+        let id = RunId::from_index(0).unwrap();
         let run = reusable_run(id);
 
         assert_eq!(
@@ -413,7 +427,7 @@ mod tests {
         let mut table = table_with_capacity(4);
         let reservation = table.reserve().unwrap();
         let released = reservation.id();
-        let wrong_id = RunId::new(released.get() + 1).unwrap();
+        let wrong_id = RunId::from_index(released.index() + 1).unwrap();
         let run = reusable_run(wrong_id);
 
         assert_eq!(
@@ -422,7 +436,7 @@ mod tests {
         );
 
         for expected in 1..4 {
-            assert_eq!(table.reserve().unwrap().id().get(), expected);
+            assert_eq!(table.reserve().unwrap().id().index(), expected);
         }
         assert_eq!(table.reserve().unwrap().id(), released);
     }

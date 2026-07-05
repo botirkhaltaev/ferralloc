@@ -1,11 +1,13 @@
 use crate::layout::LayoutSpec;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct SizeClassId(usize);
+pub(crate) struct SizeClassId {
+    index: usize,
+}
 
 impl SizeClassId {
     pub(crate) const fn index(self) -> usize {
-        self.0
+        self.index
     }
 }
 
@@ -41,7 +43,7 @@ impl SizeClasses {
         for (index, &block_size) in SIZES.iter().enumerate() {
             if block_size >= spec.size() && block_size.is_multiple_of(spec.align()) {
                 return Some(SizeClass {
-                    id: SizeClassId(index),
+                    id: SizeClassId { index },
                     block_size,
                 });
             }

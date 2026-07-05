@@ -1,4 +1,4 @@
-use core::ptr::NonNull;
+use core::{num::NonZeroU32, ptr::NonNull};
 
 use crate::{
     address::AddressRange,
@@ -11,26 +11,34 @@ use crate::{
 pub(crate) const RUN_SIZE: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct RunId(u32);
+pub(crate) struct RunId {
+    index: NonZeroU32,
+}
 
 impl RunId {
-    pub(crate) const INVALID_RAW: u32 = u32::MAX;
-
-    pub(crate) const fn new(raw: u32) -> Option<Self> {
-        if raw == Self::INVALID_RAW {
-            None
-        } else {
-            Some(Self(raw))
-        }
+    pub(crate) fn from_index(index: u32) -> Option<Self> {
+        NonZeroU32::new(index.checked_add(1)?).map(|index| Self { index })
     }
 
-    pub(crate) const fn get(self) -> u32 {
-        self.0
+    pub(crate) const fn index(self) -> u32 {
+        self.index.get() - 1
     }
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct BlockIndex(u32);
+pub(crate) struct BlockIndex {
+    index: u32,
+}
+
+impl BlockIndex {
+    const fn new(index: u32) -> Self {
+        Self { index }
+    }
+
+    const fn get(self) -> u32 {
+        self.index
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RunError {
@@ -133,7 +141,7 @@ impl Run {
             return None;
         }
 
-        Some(BlockIndex(u32::try_from(index).ok()?))
+        Some(BlockIndex::new(u32::try_from(index).ok()?))
     }
 
     unsafe fn return_block(&mut self, block: BlockIndex) -> Result<(), RunError> {
@@ -143,7 +151,7 @@ impl Run {
 
         self.live = live;
 
-        let Some(block_index) = usize::try_from(block.0).ok() else {
+        let Some(block_index) = usize::try_from(block.get()).ok() else {
             return Err(RunError::InvalidPointer);
         };
         let Some(offset) = block_index.checked_mul(self.block_size) else {
@@ -174,14 +182,14 @@ mod tests {
     fn reusable_run_takes_each_block_once() {
         let mapping = OsMemory::map(RUN_SIZE).unwrap();
         let class = class_for(64, 8);
-        let mut run = Run::new(RunId::new(0).unwrap(), mapping, class);
+        let mut run = Run::new(RunId::from_index(0).unwrap(), mapping, class);
         let spec = LayoutSpec::from_size_align(64, 8).unwrap();
         let capacity = RUN_SIZE / class.block_size();
         let mut seen = vec![false; capacity];
 
         for _ in 0..capacity {
             let ptr = run.allocate(spec).unwrap();
-            let index = run.block_at(ptr).unwrap().0 as usize;
+            let index = usize::try_from(run.block_at(ptr).unwrap().get()).unwrap();
 
             assert!(!seen[index]);
             assert!(index < capacity);
@@ -198,7 +206,7 @@ mod tests {
     fn reusable_run_reuses_returned_block() {
         let mapping = OsMemory::map(RUN_SIZE).unwrap();
         let class = class_for(128, 8);
-        let mut run = Run::new(RunId::new(1).unwrap(), mapping, class);
+        let mut run = Run::new(RunId::from_index(1).unwrap(), mapping, class);
         let spec = LayoutSpec::from_size_align(128, 8).unwrap();
 
         let ptr = run.allocate(spec).unwrap();
@@ -213,7 +221,7 @@ mod tests {
     fn reusable_run_rejects_interior_pointer() {
         let mapping = OsMemory::map(RUN_SIZE).unwrap();
         let class = class_for(64, 8);
-        let mut run = Run::new(RunId::new(2).unwrap(), mapping, class);
+        let mut run = Run::new(RunId::from_index(2).unwrap(), mapping, class);
         let spec = LayoutSpec::from_size_align(64, 8).unwrap();
         let ptr = run.allocate(spec).unwrap();
         let interior = unsafe { NonNull::new_unchecked(ptr.as_ptr().add(1)) };
@@ -225,7 +233,7 @@ mod tests {
     fn reusable_run_return_block_reports_live_underflow() {
         let mapping = OsMemory::map(RUN_SIZE).unwrap();
         let class = class_for(64, 8);
-        let mut run = Run::new(RunId::new(7).unwrap(), mapping, class);
+        let mut run = Run::new(RunId::from_index(7).unwrap(), mapping, class);
         let block = run.block_at(run.base()).unwrap();
 
         assert_eq!(
@@ -239,7 +247,7 @@ mod tests {
         let mapping = OsMemory::map(RUN_SIZE).unwrap();
         let spec = LayoutSpec::from_size_align(17, 16).unwrap();
         let class = SizeClasses::get(spec).unwrap();
-        let mut run = Run::new(RunId::new(3).unwrap(), mapping, class);
+        let mut run = Run::new(RunId::from_index(3).unwrap(), mapping, class);
         let capacity = RUN_SIZE / class.block_size();
 
         for _ in 0..capacity {
@@ -252,7 +260,7 @@ mod tests {
     fn run_range_reports_mapping_range() {
         let mapping = OsMemory::map(RUN_SIZE).unwrap();
         let range = mapping.range();
-        let run = Run::new(RunId::new(5).unwrap(), mapping, class_for(8, 8));
+        let run = Run::new(RunId::from_index(5).unwrap(), mapping, class_for(8, 8));
 
         assert_eq!(run.range().base(), range.base());
         assert_eq!(run.range().len(), range.len());

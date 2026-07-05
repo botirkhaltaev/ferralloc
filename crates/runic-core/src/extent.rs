@@ -1,23 +1,19 @@
-use core::ptr::NonNull;
+use core::{num::NonZeroU32, ptr::NonNull};
 
 use crate::{address::AddressRange, layout::LayoutSpec, os_memory::Mapping};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ExtentId(u32);
+pub(crate) struct ExtentId {
+    index: NonZeroU32,
+}
 
 impl ExtentId {
-    pub(crate) const INVALID_RAW: u32 = u32::MAX;
-
-    pub(crate) const fn new(raw: u32) -> Option<Self> {
-        if raw == Self::INVALID_RAW {
-            None
-        } else {
-            Some(Self(raw))
-        }
+    pub(crate) fn from_index(index: u32) -> Option<Self> {
+        NonZeroU32::new(index.checked_add(1)?).map(|index| Self { index })
     }
 
-    pub(crate) const fn get(self) -> u32 {
-        self.0
+    pub(crate) const fn index(self) -> u32 {
+        self.index.get() - 1
     }
 }
 
@@ -83,7 +79,7 @@ mod tests {
         let spec = LayoutSpec::from_size_align(128 * 1024, 4096).unwrap();
         let mapping = OsMemory::map(spec.mapping_len(OsMemory::page_size()).unwrap()).unwrap();
         let mapping_range = mapping.range();
-        let extent = Extent::new(ExtentId::new(0).unwrap(), mapping, spec).unwrap();
+        let extent = Extent::new(ExtentId::from_index(0).unwrap(), mapping, spec).unwrap();
 
         assert_eq!(extent.ptr().as_ptr() as usize % spec.align(), 0);
         assert_eq!(extent.range().len(), spec.size());
@@ -94,7 +90,7 @@ mod tests {
     fn extent_rejects_interior_pointer() {
         let spec = LayoutSpec::from_size_align(128 * 1024, 4096).unwrap();
         let mapping = OsMemory::map(spec.mapping_len(OsMemory::page_size()).unwrap()).unwrap();
-        let extent = Extent::new(ExtentId::new(1).unwrap(), mapping, spec).unwrap();
+        let extent = Extent::new(ExtentId::from_index(1).unwrap(), mapping, spec).unwrap();
         // SAFETY: adding one stays within the mapped extent for this non-zero allocation.
         let interior = unsafe { NonNull::new_unchecked(extent.ptr().as_ptr().add(1)) };
 
@@ -106,7 +102,7 @@ mod tests {
     fn extent_accepts_exact_pointer() {
         let spec = LayoutSpec::from_size_align(128 * 1024, 4096).unwrap();
         let mapping = OsMemory::map(spec.mapping_len(OsMemory::page_size()).unwrap()).unwrap();
-        let extent = Extent::new(ExtentId::new(2).unwrap(), mapping, spec).unwrap();
+        let extent = Extent::new(ExtentId::from_index(2).unwrap(), mapping, spec).unwrap();
 
         assert!(extent.starts_at(extent.ptr()));
         assert_eq!(extent.free(extent.ptr()), Ok(()));

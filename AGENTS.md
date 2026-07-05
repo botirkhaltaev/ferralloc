@@ -25,6 +25,10 @@ Use `ROADMAP.md` as the source of truth for project thesis, current scope, archi
 - Keep code and architecture simple wherever possible.
 - Write idiomatic, performance-aware Rust without premature optimization.
 - Introduce abstractions only when they reduce complexity or clarify invariants.
+- Prefer entity-composing builders over passive config bags when fluent construction is useful.
+- Avoid passive adapter or wrapper layers for internal APIs unless they remove real duplication or encode a necessary invariant.
+- Prefer Rust type-system invariants such as `NonZero*`, `NonNull`, and domain newtypes over sentinel values or ad hoc invalid raw constants.
+- Avoid tuple structs with unnamed fields for domain entities; prefer named fields when field meaning matters.
 - Avoid callback-style helper patterns for ordinary control flow; prefer direct, explicit calls.
 - Avoid lint workarounds that reduce code quality; remove or narrow lints that fight idiomatic Rust.
 - Do not use `#[allow]` or `#[expect]` as a shortcut when a cleaner design or refactor is reasonable.

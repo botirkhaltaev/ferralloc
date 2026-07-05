@@ -3,7 +3,6 @@ use core::{mem::MaybeUninit, ptr::NonNull, slice};
 use crate::{
     extent::{Extent, ExtentId},
     os_memory::OsMemory,
-    table_capacity::TableCapacity,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -26,11 +25,11 @@ impl ExtentReservation {
 pub(crate) struct ExtentTable {
     slots: Option<ExtentSlots>,
     next: u32,
-    capacity: TableCapacity,
+    capacity: u32,
 }
 
 impl ExtentTable {
-    pub(crate) const fn new(capacity: TableCapacity) -> Self {
+    pub(crate) const fn new(capacity: u32) -> Self {
         Self {
             slots: None,
             next: 0,
@@ -39,7 +38,10 @@ impl ExtentTable {
     }
 
     pub(crate) fn reserve(&mut self) -> Option<ExtentReservation> {
-        let capacity = self.capacity.get();
+        let capacity = usize::try_from(self.capacity).ok()?;
+        if capacity == 0 {
+            return None;
+        }
         let start = usize::try_from(self.next).ok()?;
 
         for offset in 0..capacity {
@@ -59,7 +61,7 @@ impl ExtentTable {
                     index.checked_add(1)?
                 };
                 self.next = u32::try_from(next).ok()?;
-                let id = ExtentId::new(u32::try_from(index).ok()?)?;
+                let id = ExtentId::from_index(u32::try_from(index).ok()?)?;
 
                 return Some(ExtentReservation { id });
             }
@@ -112,7 +114,7 @@ impl ExtentTable {
 
     fn slots_mut(&mut self) -> Option<&mut ExtentSlots> {
         if self.slots.is_none() {
-            self.slots = Some(ExtentSlots::new(self.capacity.get())?);
+            self.slots = Some(ExtentSlots::new(usize::try_from(self.capacity).ok()?)?);
         }
 
         self.slots.as_mut()
@@ -127,7 +129,7 @@ impl ExtentTable {
     }
 
     fn index(id: ExtentId) -> Option<usize> {
-        usize::try_from(id.get()).ok()
+        usize::try_from(id.index()).ok()
     }
 }
 
@@ -239,7 +241,9 @@ impl ExtentSlot {
 
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-struct SlotState(u8);
+struct SlotState {
+    raw: u8,
+}
 
 impl SlotState {
     const EMPTY: u8 = 0;
@@ -247,27 +251,31 @@ impl SlotState {
     const OCCUPIED: u8 = 2;
 
     const fn empty() -> Self {
-        Self(Self::EMPTY)
+        Self { raw: Self::EMPTY }
     }
 
     const fn reserved() -> Self {
-        Self(Self::RESERVED)
+        Self {
+            raw: Self::RESERVED,
+        }
     }
 
     const fn occupied() -> Self {
-        Self(Self::OCCUPIED)
+        Self {
+            raw: Self::OCCUPIED,
+        }
     }
 
     const fn is_empty(self) -> bool {
-        self.0 == Self::EMPTY
+        self.raw == Self::EMPTY
     }
 
     const fn is_reserved(self) -> bool {
-        self.0 == Self::RESERVED
+        self.raw == Self::RESERVED
     }
 
     const fn is_occupied(self) -> bool {
-        self.0 == Self::OCCUPIED
+        self.raw == Self::OCCUPIED
     }
 }
 
@@ -277,7 +285,6 @@ mod tests {
         extent::{Extent, ExtentId},
         layout::LayoutSpec,
         os_memory::OsMemory,
-        table_capacity::TableCapacity,
     };
 
     use super::*;
@@ -291,15 +298,22 @@ mod tests {
     }
 
     fn table_with_capacity(capacity: usize) -> ExtentTable {
-        ExtentTable::new(TableCapacity::new(capacity).unwrap())
+        ExtentTable::new(u32::try_from(capacity).unwrap())
+    }
+
+    #[test]
+    fn extent_table_zero_capacity_reserves_none() {
+        let mut table = ExtentTable::new(0);
+
+        assert_eq!(table.reserve(), None);
     }
 
     #[test]
     fn extent_table_respects_injected_capacity() {
         let mut table = table_with_capacity(2);
 
-        assert_eq!(table.reserve().unwrap().id().get(), 0);
-        assert_eq!(table.reserve().unwrap().id().get(), 1);
+        assert_eq!(table.reserve().unwrap().id().index(), 0);
+        assert_eq!(table.reserve().unwrap().id().index(), 1);
         assert_eq!(table.reserve(), None);
     }
 
@@ -321,7 +335,7 @@ mod tests {
         let mut table = table_with_capacity(4);
         let reservation = table.reserve().unwrap();
         let released = reservation.id();
-        let wrong_id = ExtentId::new(released.get() + 1).unwrap();
+        let wrong_id = ExtentId::from_index(released.index() + 1).unwrap();
         let extent = reusable_extent(wrong_id);
 
         assert_eq!(
@@ -330,7 +344,7 @@ mod tests {
         );
 
         for expected in 1..4 {
-            assert_eq!(table.reserve().unwrap().id().get(), expected);
+            assert_eq!(table.reserve().unwrap().id().index(), expected);
         }
         assert_eq!(table.reserve().unwrap().id(), released);
     }

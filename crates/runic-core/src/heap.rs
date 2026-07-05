@@ -6,7 +6,6 @@ use core::{
 use crate::{
     extent::Extent,
     extent_table::{ExtentReservation, ExtentTable},
-    heap_config::HeapConfig,
     layout::LayoutSpec,
     os_memory::OsMemory,
     page_map::{PageEntry, PageMap, PageRange},
@@ -22,6 +21,12 @@ pub(crate) struct Heap {
     active: [Option<RunId>; SizeClasses::COUNT],
 }
 
+#[cfg(test)]
+pub(crate) struct HeapBuilder {
+    runs: RunTable,
+    extents: ExtentTable,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum HeapError {
     UnknownPointer,
@@ -33,17 +38,20 @@ pub(crate) enum HeapError {
 }
 
 impl Heap {
-    pub(crate) const fn new() -> Self {
-        Self::with_config(HeapConfig::default())
-    }
+    pub(crate) const DEFAULT_TABLE_CAPACITY: u32 = 65_536;
 
-    pub(crate) const fn with_config(config: HeapConfig) -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
-            runs: RunTable::new(config.run_capacity()),
-            extents: ExtentTable::new(config.extent_capacity()),
+            runs: RunTable::new(Self::DEFAULT_TABLE_CAPACITY),
+            extents: ExtentTable::new(Self::DEFAULT_TABLE_CAPACITY),
             pages: PageMap::new(),
             active: [None; SizeClasses::COUNT],
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn builder() -> HeapBuilder {
+        HeapBuilder::new()
     }
 
     pub(crate) fn alloc(&mut self, layout: Layout) -> *mut u8 {
@@ -108,7 +116,6 @@ impl Heap {
 
         Ok(())
     }
-
     pub(crate) fn realloc(
         &mut self,
         ptr: *mut u8,
@@ -316,11 +323,37 @@ impl Heap {
 }
 
 #[cfg(test)]
+impl HeapBuilder {
+    pub(crate) const fn new() -> Self {
+        Self {
+            runs: RunTable::new(Heap::DEFAULT_TABLE_CAPACITY),
+            extents: ExtentTable::new(Heap::DEFAULT_TABLE_CAPACITY),
+        }
+    }
+
+    pub(crate) fn runs(mut self, runs: RunTable) -> Self {
+        self.runs = runs;
+        self
+    }
+
+    pub(crate) fn extents(mut self, extents: ExtentTable) -> Self {
+        self.extents = extents;
+        self
+    }
+
+    pub(crate) fn build(self) -> Heap {
+        Heap {
+            runs: self.runs,
+            extents: self.extents,
+            pages: PageMap::new(),
+            active: [None; SizeClasses::COUNT],
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
-    use crate::{
-        extent::ExtentId, heap_config::HeapConfig, page_map::PageRange, run::RunId,
-        size_class::SizeClasses, table_capacity::TableCapacity,
-    };
+    use crate::{extent::ExtentId, page_map::PageRange, run::RunId, size_class::SizeClasses};
 
     use super::*;
 
@@ -341,9 +374,10 @@ mod tests {
     }
 
     fn test_heap() -> Heap {
-        let capacity = TableCapacity::new(4).unwrap();
-
-        Heap::with_config(HeapConfig::new(capacity, capacity))
+        Heap::builder()
+            .runs(RunTable::new(4))
+            .extents(ExtentTable::new(4))
+            .build()
     }
 
     #[test]
@@ -354,7 +388,7 @@ mod tests {
         let run = reusable_run(id);
         let range = run.range();
         let page_range = PageRange::from_range(range).unwrap();
-        let existing = PageEntry::Run(RunId::new(900).unwrap());
+        let existing = PageEntry::Run(RunId::from_index(900).unwrap());
 
         heap.pages.insert(page_range, existing).unwrap();
 
@@ -371,7 +405,7 @@ mod tests {
         let extent = reusable_extent(id);
         let range = extent.range();
         let page_range = PageRange::from_range(range).unwrap();
-        let existing = PageEntry::Extent(ExtentId::new(900).unwrap());
+        let existing = PageEntry::Extent(ExtentId::from_index(900).unwrap());
 
         heap.pages.insert(page_range, existing).unwrap();
 

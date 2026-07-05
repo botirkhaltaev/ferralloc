@@ -1,4 +1,4 @@
-use core::{mem::ManuallyDrop, ptr::NonNull};
+use core::ptr::NonNull;
 
 use crate::address::AddressRange;
 
@@ -6,12 +6,6 @@ pub(crate) const PAGE_SIZE: usize = 4096;
 
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct Mapping {
-    base: NonNull<u8>,
-    len: usize,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct MappingParts {
     base: NonNull<u8>,
     len: usize,
 }
@@ -33,15 +27,6 @@ impl Mapping {
     pub(crate) const fn range(&self) -> AddressRange {
         AddressRange::new(self.base, self.len)
     }
-
-    pub(crate) fn into_parts(self) -> MappingParts {
-        let mapping = ManuallyDrop::new(self);
-
-        MappingParts {
-            base: mapping.base,
-            len: mapping.len,
-        }
-    }
 }
 
 impl Drop for Mapping {
@@ -54,25 +39,6 @@ impl Drop for Mapping {
 // SAFETY: Mapping owns a process-private mmap region. Moving ownership to another
 // thread does not permit concurrent mutation of allocator metadata.
 unsafe impl Send for Mapping {}
-
-impl MappingParts {
-    pub(crate) const fn new(base: NonNull<u8>, len: usize) -> Self {
-        Self { base, len }
-    }
-
-    pub(crate) const fn base(self) -> NonNull<u8> {
-        self.base
-    }
-
-    pub(crate) const fn len(self) -> usize {
-        self.len
-    }
-
-    pub(crate) unsafe fn unmap(self) {
-        // SAFETY: caller guarantees these parts came from Mapping::into_parts and are still owned.
-        unsafe { libc::munmap(self.base.as_ptr().cast(), self.len) };
-    }
-}
 
 pub(crate) struct OsMemory;
 

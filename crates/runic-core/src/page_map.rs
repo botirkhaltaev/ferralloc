@@ -1,9 +1,12 @@
-use core::{mem::size_of, ptr::NonNull};
+use core::{
+    mem::{MaybeUninit, size_of},
+    ptr::NonNull,
+};
 
 use crate::{
     address::AddressRange,
     extent::ExtentId,
-    os_memory::{Mapping, MappingParts, OsMemory, PAGE_SIZE},
+    os_memory::{Mapping, OsMemory, PAGE_SIZE},
     run::RunId,
 };
 
@@ -36,7 +39,9 @@ impl PageRange {
     pub(crate) fn new(base: NonNull<u8>, len: usize) -> Option<Self> {
         let first = Page::containing(base);
         let end_addr = base.as_ptr().addr().checked_add(len.checked_sub(1)?)?;
-        let last = Page((end_addr >> PAGE_SHIFT).checked_add(1)?);
+        let last = Page {
+            number: (end_addr >> PAGE_SHIFT).checked_add(1)?,
+        };
 
         Some(Self { first, last })
     }
@@ -54,22 +59,26 @@ impl PageRange {
 }
 
 #[derive(Clone, Copy)]
-struct Page(usize);
+struct Page {
+    number: usize,
+}
 
 impl Page {
     fn containing(ptr: NonNull<u8>) -> Self {
-        Self(ptr.as_ptr().addr() >> PAGE_SHIFT)
+        Self {
+            number: ptr.as_ptr().addr() >> PAGE_SHIFT,
+        }
     }
 
     const fn indexes(self) -> Option<(L1Index, L2Index)> {
-        let l2 = self.0 & (L2_ENTRIES - 1);
-        let l1 = self.0 >> L2_BITS;
+        let l2 = self.number & (L2_ENTRIES - 1);
+        let l1 = self.number >> L2_BITS;
 
         if l1 >= L1_ENTRIES {
             return None;
         }
 
-        Some((L1Index(l1), L2Index(l2)))
+        Some((L1Index { index: l1 }, L2Index { index: l2 }))
     }
 }
 
@@ -82,31 +91,35 @@ impl Iterator for Pages {
     type Item = Page;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.next.0 >= self.last.0 {
+        if self.next.number >= self.last.number {
             return None;
         }
 
         let page = self.next;
-        self.next.0 = self.next.0.checked_add(1)?;
+        self.next.number = self.next.number.checked_add(1)?;
         Some(page)
     }
 }
 
 #[derive(Clone, Copy, Eq, PartialEq)]
-struct L1Index(usize);
+struct L1Index {
+    index: usize,
+}
 
 impl L1Index {
     const fn get(self) -> usize {
-        self.0
+        self.index
     }
 }
 
 #[derive(Clone, Copy)]
-struct L2Index(usize);
+struct L2Index {
+    index: usize,
+}
 
 impl L2Index {
     const fn get(self) -> usize {
-        self.0
+        self.index
     }
 }
 
@@ -117,9 +130,7 @@ struct L1Table {
 
 impl L1Table {
     fn get(&self, index: L1Index) -> Option<NonNull<L2Table>> {
-        self.entries
-            .get(index.get())
-            .and_then(|entry| entry.l2_table())
+        self.entries.get(index.get()).and_then(L1Entry::l2_table)
     }
 
     fn get_or_create(&mut self, index: L1Index) -> Option<NonNull<L2Table>> {
@@ -131,7 +142,7 @@ impl L1Table {
 
         let mapping = OsMemory::map(size_of::<L2Table>())?;
         let table = mapping.base().cast::<L2Table>();
-        entry.set(table, mapping);
+        entry.set(mapping);
 
         Some(table)
     }
@@ -144,34 +155,40 @@ impl L1Table {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
 struct L1Entry {
-    raw: *mut L2Table,
-    mapping_base: *mut u8,
-    mapping_len: usize,
+    mapping: MaybeUninit<Mapping>,
+    state: L1EntryState,
 }
 
 impl L1Entry {
-    fn l2_table(self) -> Option<NonNull<L2Table>> {
-        NonNull::new(self.raw)
+    fn l2_table(&self) -> Option<NonNull<L2Table>> {
+        self.mapping()
+            .map(|mapping| mapping.base().cast::<L2Table>())
     }
 
-    fn set(&mut self, table: NonNull<L2Table>, mapping: Mapping) {
-        let parts = mapping.into_parts();
-
-        self.raw = table.as_ptr();
-        self.mapping_base = parts.base().as_ptr();
-        self.mapping_len = parts.len();
-    }
-
-    fn mapping_parts(self) -> Option<MappingParts> {
-        let base = NonNull::new(self.mapping_base)?;
-
-        if self.mapping_len == 0 {
+    fn mapping(&self) -> Option<&Mapping> {
+        if !self.state.is_occupied() {
             return None;
         }
 
-        Some(MappingParts::new(base, self.mapping_len))
+        // SAFETY: occupied state is set only after mapping.write initializes the slot.
+        Some(unsafe { self.mapping.assume_init_ref() })
+    }
+
+    fn set(&mut self, mapping: Mapping) {
+        self.mapping.write(mapping);
+        self.state = L1EntryState::occupied();
+    }
+
+    fn remove_mapping(&mut self) -> Option<Mapping> {
+        if !self.state.is_occupied() {
+            return None;
+        }
+
+        self.state = L1EntryState::empty();
+
+        // SAFETY: occupied state was true on entry, so the slot contains an initialized Mapping.
+        Some(unsafe { self.mapping.assume_init_read() })
     }
 
     fn clear_empty_l2(&mut self) -> bool {
@@ -184,18 +201,36 @@ impl L1Entry {
             return false;
         }
 
-        let Some(parts) = self.mapping_parts() else {
-            return false;
-        };
+        self.clear_l2()
+    }
 
-        self.raw = core::ptr::null_mut();
-        self.mapping_base = core::ptr::null_mut();
-        self.mapping_len = 0;
+    fn clear_l2(&mut self) -> bool {
+        self.remove_mapping().is_some()
+    }
+}
 
-        // SAFETY: this entry owns the mapping parts and has cleared its ownership fields.
-        unsafe { parts.unmap() };
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+struct L1EntryState {
+    raw: u8,
+}
 
-        true
+impl L1EntryState {
+    const EMPTY: u8 = 0;
+    const OCCUPIED: u8 = 1;
+
+    const fn empty() -> Self {
+        Self { raw: Self::EMPTY }
+    }
+
+    const fn occupied() -> Self {
+        Self {
+            raw: Self::OCCUPIED,
+        }
+    }
+
+    const fn is_occupied(self) -> bool {
+        self.raw == Self::OCCUPIED
     }
 }
 
@@ -227,22 +262,23 @@ impl L2Table {
     }
 }
 
-#[repr(transparent)]
 #[derive(Clone, Copy, Eq, PartialEq)]
-struct MapEntry(u32);
+struct MapEntry {
+    raw: u32,
+}
 
 impl MapEntry {
     const KIND_EXTENT: u32 = 1 << 31;
     const ID_MASK: u32 = !Self::KIND_EXTENT;
 
     const fn empty() -> Self {
-        Self(0)
+        Self { raw: 0 }
     }
 
     fn occupied(entry: PageEntry) -> Option<Self> {
         match entry {
-            PageEntry::Run(id) => Self::encode(id.get(), 0),
-            PageEntry::Extent(id) => Self::encode(id.get(), Self::KIND_EXTENT),
+            PageEntry::Run(id) => Self::encode(id.index(), 0),
+            PageEntry::Extent(id) => Self::encode(id.index(), Self::KIND_EXTENT),
         }
     }
 
@@ -253,11 +289,13 @@ impl MapEntry {
             return None;
         }
 
-        Some(Self(kind | encoded))
+        Some(Self {
+            raw: kind | encoded,
+        })
     }
 
     const fn is_empty(self) -> bool {
-        self.0 == 0
+        self.raw == 0
     }
 
     fn page(self) -> Option<PageEntry> {
@@ -265,12 +303,12 @@ impl MapEntry {
             return None;
         }
 
-        let raw = (self.0 & Self::ID_MASK).checked_sub(1)?;
+        let raw = (self.raw & Self::ID_MASK).checked_sub(1)?;
 
-        if self.0 & Self::KIND_EXTENT == 0 {
-            RunId::new(raw).map(PageEntry::Run)
+        if self.raw & Self::KIND_EXTENT == 0 {
+            RunId::from_index(raw).map(PageEntry::Run)
         } else {
-            ExtentId::new(raw).map(PageEntry::Extent)
+            ExtentId::from_index(raw).map(PageEntry::Extent)
         }
     }
 }
@@ -492,13 +530,8 @@ impl Drop for PageMap {
             return;
         };
 
-        for entry in &l1.entries {
-            let Some(mapping) = entry.mapping_parts() else {
-                continue;
-            };
-
-            // SAFETY: L1Entry owns these L2 mapping parts after Mapping::into_parts.
-            unsafe { mapping.unmap() };
+        for entry in &mut l1.entries {
+            let _ = entry.clear_l2();
         }
     }
 }
@@ -512,7 +545,7 @@ const _: () = assert!(
 mod tests {
     use super::*;
     fn id(raw: u32) -> RunId {
-        RunId::new(raw).unwrap()
+        RunId::from_index(raw).unwrap()
     }
 
     fn run(raw: u32) -> PageEntry {
@@ -520,7 +553,7 @@ mod tests {
     }
 
     fn extent(raw: u32) -> PageEntry {
-        PageEntry::Extent(ExtentId::new(raw).unwrap())
+        PageEntry::Extent(ExtentId::from_index(raw).unwrap())
     }
 
     struct TestMapping {

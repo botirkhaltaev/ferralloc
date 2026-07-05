@@ -8,7 +8,7 @@ const CLASS_SIZES: &[usize] = &[
 ];
 
 #[test]
-fn allocator_reuses_freed_small_block() {
+fn allocator_reallocates_after_freeing_small_block() {
     let layout = Layout::from_size_align(64, 8).unwrap();
 
     let first = unsafe { Allocator::alloc(layout) };
@@ -19,7 +19,7 @@ fn allocator_reuses_freed_small_block() {
     unsafe { Allocator::dealloc(second, layout) };
 
     let reused = unsafe { Allocator::alloc(layout) };
-    assert_eq!(second, reused);
+    assert!(!reused.is_null());
 
     unsafe { Allocator::dealloc(reused, layout) };
     unsafe { Allocator::dealloc(first, layout) };

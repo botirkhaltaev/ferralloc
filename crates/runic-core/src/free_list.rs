@@ -40,11 +40,17 @@ mod tests {
     use super::*;
 
     #[repr(align(16))]
-    struct Blocks([u8; 64]);
+    struct Blocks {
+        bytes: [u8; 64],
+    }
 
     impl Blocks {
+        const fn new() -> Self {
+            Self { bytes: [0; 64] }
+        }
+
         fn ptr_at(&mut self, offset: usize) -> NonNull<u8> {
-            let ptr = unsafe { self.0.as_mut_ptr().add(offset) };
+            let ptr = unsafe { self.bytes.as_mut_ptr().add(offset) };
             unsafe { NonNull::new_unchecked(ptr) }
         }
     }
@@ -58,7 +64,7 @@ mod tests {
 
     #[test]
     fn free_list_returns_single_pushed_block() {
-        let mut blocks = Blocks([0; 64]);
+        let mut blocks = Blocks::new();
         let ptr = blocks.ptr_at(0);
         let mut list = FreeList::new();
 
@@ -70,7 +76,7 @@ mod tests {
 
     #[test]
     fn free_list_pops_in_lifo_order() {
-        let mut blocks = Blocks([0; 64]);
+        let mut blocks = Blocks::new();
         let first = blocks.ptr_at(0);
         let second = blocks.ptr_at(16);
         let third = blocks.ptr_at(32);
