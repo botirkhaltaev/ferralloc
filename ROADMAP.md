@@ -1,21 +1,21 @@
-# Ferralloc Roadmap
+# Runic Roadmap
 
 ## Thesis
 
-Ferralloc exists because Rust should have a serious Rust-native hosted allocator with a small auditable unsafe core, out-of-line metadata, explicit run invariants, and a clean path toward thread-local heaps, remote frees, hardening, and hugepage-aware allocation.
+Runic exists because Rust should have a serious Rust-native hosted allocator with a small auditable unsafe core, out-of-line metadata, explicit run invariants, and a clean path toward thread-local heaps, remote frees, hardening, and hugepage-aware allocation.
 
-Ferralloc is not a line-for-line port of mimalloc, jemalloc, TCMalloc, snmalloc, or another allocator. It should learn from existing allocators while keeping Rust-native invariants explicit and testable.
+Runic is not a line-for-line port of mimalloc, jemalloc, TCMalloc, snmalloc, or another allocator. It should learn from existing allocators while keeping Rust-native invariants explicit and testable.
 
 The useful claim is not:
 
 ```text
-Ferralloc is safe because it is written in Rust.
+Runic is safe because it is written in Rust.
 ```
 
 The useful claim is:
 
 ```text
-Ferralloc reduces and audits the unsafe core, encodes allocator invariants explicitly, and makes allocator correctness testable before adding performance layers.
+Runic reduces and audits the unsafe core, encodes allocator invariants explicitly, and makes allocator correctness testable before adding performance layers.
 ```
 
 ## Current Milestone
@@ -78,7 +78,7 @@ If this invariant is wrong, later features like thread-local heaps and remote fr
 
 ```text
 GlobalAlloc
-  -> Ferralloc
+  -> RunicAlloc
       -> Allocator
           -> Heap
               -> PageMap
@@ -95,7 +95,7 @@ Use one global lock around `Heap`.
 ## Entity Responsibilities
 
 ```text
-Ferralloc    owns the Rust GlobalAlloc boundary
+RunicAlloc   owns the Rust GlobalAlloc boundary
 Allocator    owns the core public allocator API
 Heap         owns allocation policy and global lock-protected allocator data
 LayoutSpec   owns normalized layout semantics
@@ -112,16 +112,16 @@ PageMap      owns page-indexed pointer lookup
 ## Workspace
 
 ```text
-crates/ferralloc-core
+crates/runic-core
   allocator mechanics and global state
 
-crates/ferralloc
+crates/runic
   public GlobalAlloc wrapper
 
-crates/ferralloc-test-support
+crates/runic-test-support
   reusable future test machinery
 
-crates/ferralloc-bench
+crates/runic-bench
   Criterion and RSS benchmark suite
 ```
 
@@ -178,18 +178,18 @@ Use profiling data to plan thread-local heap work.
 
 ## Profiling Notes
 
-Current profiling says Ferralloc's next performance work should stay structural and
+Current profiling says Runic's next performance work should stay structural and
 allocator-specific, not micro-optimized:
 
 ```text
 small_biased_random, 2M ops:
-  ferralloc ~208 ms
+  runic     ~208 ms
   snmalloc  ~127 ms
   mimalloc  ~173 ms
   system    ~254 ms
 
 large_alloc_churn_256k, 100k ops:
-  ferralloc ~346 ms, ~201k page faults, mostly sys time
+  runic     ~346 ms, ~201k page faults, mostly sys time
   mimalloc  ~3.5 ms, ~203 page faults
   snmalloc  ~28 ms, ~155 page faults
   system    ~395 ms, ~300k page faults

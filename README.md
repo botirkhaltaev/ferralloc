@@ -1,6 +1,6 @@
-# Ferralloc
+# Runic
 
-Ferralloc is an experimental Rust-native allocator project.
+Runic is an experimental Rust-native allocator project.
 
 The first milestone is deliberately small: build a global-lock allocator core with size-classed runs, dedicated extents, out-of-line metadata, page-indexed pointer lookup, block-boundary checks, exact-pointer extent frees, basic `realloc`, basic `alloc_zeroed`, and randomized tests.
 
@@ -9,10 +9,10 @@ Correctness comes before speed.
 ## Workspace
 
 ```text
-crates/ferralloc-core          allocator mechanics and global state
-crates/ferralloc               GlobalAlloc wrapper
-crates/ferralloc-test-support  reusable test machinery
-crates/ferralloc-bench         benchmark harness
+crates/runic-core          allocator mechanics and global state
+crates/runic               GlobalAlloc wrapper
+crates/runic-test-support  reusable test machinery
+crates/runic-bench         benchmark harness
 ```
 
 ## Commands

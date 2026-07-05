@@ -1,6 +1,6 @@
 use std::{env, process::Command};
 
-use ferralloc_bench::{
+use runic_bench::{
     allocator_target::{TARGETS, target_by_name},
     rss::RssReport,
     workload,

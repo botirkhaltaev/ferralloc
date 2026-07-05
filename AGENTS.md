@@ -2,7 +2,7 @@
 
 ## Project Context
 
-Ferralloc is a Rust-native allocator project. The goal is not to port an existing allocator line-for-line, but to build a correct Rust allocator core with explicit, auditable invariants.
+Runic is a Rust-native allocator project. The goal is not to port an existing allocator line-for-line, but to build a correct Rust allocator core with explicit, auditable invariants.
 
 Current milestone: a global-lock allocator that can run real Rust programs and survive randomized allocation traces.
 

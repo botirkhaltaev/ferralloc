@@ -3,12 +3,12 @@ use std::{
     ptr::NonNull,
 };
 
-use ferralloc::Ferralloc;
 use mimalloc::MiMalloc;
+use runic::RunicAlloc;
 use snmalloc_rs::SnMalloc;
 use tikv_jemallocator::Jemalloc;
 
-static FERRALLOC: Ferralloc = Ferralloc;
+static RUNIC: RunicAlloc = RunicAlloc;
 static SYSTEM: System = System;
 static MIMALLOC: MiMalloc = MiMalloc;
 static JEMALLOC: Jemalloc = Jemalloc;
@@ -79,7 +79,7 @@ impl AllocatorTarget {
 }
 
 pub const TARGETS: &[AllocatorTarget] = &[
-    AllocatorTarget::new("ferralloc", &FERRALLOC),
+    AllocatorTarget::new("runic", &RUNIC),
     AllocatorTarget::new("system", &SYSTEM),
     AllocatorTarget::new("mimalloc", &MIMALLOC),
     AllocatorTarget::new("jemalloc", &JEMALLOC),

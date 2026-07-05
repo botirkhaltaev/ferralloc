@@ -1,17 +1,17 @@
-use ferralloc::Ferralloc;
+use runic::RunicAlloc;
 use std::{collections::HashMap, sync::Arc};
 
 #[global_allocator]
-static GLOBAL: Ferralloc = Ferralloc;
+static GLOBAL: RunicAlloc = RunicAlloc;
 
 #[test]
-fn box_uses_ferralloc() {
+fn box_uses_runic() {
     let value = Box::new(42_u64);
     assert_eq!(*value, 42);
 }
 
 #[test]
-fn vec_uses_ferralloc() {
+fn vec_uses_runic() {
     let mut values = Vec::new();
 
     for value in 0..10_000 {
@@ -23,19 +23,19 @@ fn vec_uses_ferralloc() {
 }
 
 #[test]
-fn string_uses_ferralloc() {
+fn string_uses_runic() {
     let mut value = String::new();
 
     for _ in 0..1024 {
-        value.push_str("ferralloc");
+        value.push_str("runic");
     }
 
-    assert!(value.starts_with("ferralloc"));
-    assert_eq!(value.len(), 1024 * "ferralloc".len());
+    assert!(value.starts_with("runic"));
+    assert_eq!(value.len(), 1024 * "runic".len());
 }
 
 #[test]
-fn hash_map_uses_ferralloc() {
+fn hash_map_uses_runic() {
     let mut values = HashMap::new();
 
     for value in 0..2048 {
@@ -46,21 +46,21 @@ fn hash_map_uses_ferralloc() {
 }
 
 #[test]
-fn arc_uses_ferralloc() {
-    let value = Arc::new(String::from("ferralloc"));
+fn arc_uses_runic() {
+    let value = Arc::new(String::from("runic"));
     let cloned = Arc::clone(&value);
 
-    assert_eq!(&**cloned, "ferralloc");
+    assert_eq!(&**cloned, "runic");
     assert_eq!(Arc::strong_count(&value), 2);
 }
 
 #[test]
-fn nested_vec_string_uses_ferralloc() {
+fn nested_vec_string_uses_runic() {
     let mut values = Vec::new();
 
     for index in 0..512 {
-        values.push(format!("ferralloc-{index}"));
+        values.push(format!("runic-{index}"));
     }
 
-    assert_eq!(values[511], "ferralloc-511");
+    assert_eq!(values[511], "runic-511");
 }

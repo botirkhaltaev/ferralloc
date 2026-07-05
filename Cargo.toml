@@ -1,9 +1,9 @@
 [workspace]
 members = [
-  "crates/ferralloc",
-  "crates/ferralloc-core",
-  "crates/ferralloc-test-support",
-  "crates/ferralloc-bench",
+  "crates/runic",
+  "crates/runic-core",
+  "crates/runic-test-support",
+  "crates/runic-bench",
 ]
 resolver = "3"
 
@@ -11,7 +11,7 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/botirkhaltaev/ferralloc"
+repository = "https://github.com/botirkhaltaev/runic"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

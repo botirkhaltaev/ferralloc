@@ -10,7 +10,7 @@ static HEAP: Mutex<Heap> = Mutex::new(Heap::new());
 pub struct Allocator;
 
 impl Allocator {
-    /// Allocates memory for `layout` using the process-global Ferralloc state.
+    /// Allocates memory for `layout` using the process-global Runic state.
     ///
     /// # Safety
     ///

@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use criterion::{Criterion, Throughput};
-use ferralloc_bench::global_workload;
+use runic_bench::global_workload;
 
 pub fn register_global_collections(c: &mut Criterion, allocator: &str) {
     let mut group = c.benchmark_group(format!("global/{allocator}/collections"));

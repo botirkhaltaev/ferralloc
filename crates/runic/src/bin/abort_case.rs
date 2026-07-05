@@ -3,10 +3,10 @@ use std::{
     env,
 };
 
-use ferralloc::Ferralloc;
+use runic::RunicAlloc;
 
 #[global_allocator]
-static GLOBAL: Ferralloc = Ferralloc;
+static GLOBAL: RunicAlloc = RunicAlloc;
 
 fn main() {
     let Some(case) = env::args().nth(1) else {

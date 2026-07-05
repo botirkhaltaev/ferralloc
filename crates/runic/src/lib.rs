@@ -2,4 +2,4 @@
 
 mod global;
 
-pub use global::Ferralloc;
+pub use global::RunicAlloc;

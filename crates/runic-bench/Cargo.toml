@@ -1,5 +1,5 @@
 [package]
-name = "ferralloc-bench"
+name = "runic-bench"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,7 +10,7 @@ publish = false
 workspace = true
 
 [dependencies]
-ferralloc = { path = "../ferralloc" }
+runic = { path = "../runic" }
 mimalloc = "0.1"
 snmalloc-rs = "0.3"
 tikv-jemallocator = "0.6"
@@ -31,7 +31,7 @@ name = "global_system"
 harness = false
 
 [[bench]]
-name = "global_ferralloc"
+name = "global_runic"
 harness = false
 
 [[bench]]

@@ -1,5 +1,5 @@
 [package]
-name = "ferralloc"
+name = "runic-test-support"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,4 +9,5 @@ repository.workspace = true
 workspace = true
 
 [dependencies]
-ferralloc-core = { path = "../ferralloc-core" }
+runic = { path = "../runic" }
+runic-core = { path = "../runic-core" }

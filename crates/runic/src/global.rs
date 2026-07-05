@@ -1,10 +1,10 @@
 use core::alloc::{GlobalAlloc, Layout};
 
-use ferralloc_core::Allocator;
+use runic_core::Allocator;
 
-pub struct Ferralloc;
+pub struct RunicAlloc;
 
-unsafe impl GlobalAlloc for Ferralloc {
+unsafe impl GlobalAlloc for RunicAlloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         unsafe { Allocator::alloc(layout) }
     }

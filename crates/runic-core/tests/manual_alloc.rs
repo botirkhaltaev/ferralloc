@@ -1,6 +1,6 @@
 use core::alloc::Layout;
 
-use ferralloc_core::Allocator;
+use runic_core::Allocator;
 
 const CLASS_SIZES: &[usize] = &[
     8, 16, 24, 32, 48, 64, 80, 96, 128, 160, 192, 256, 320, 384, 512, 768, 1024, 1536, 2048, 3072,

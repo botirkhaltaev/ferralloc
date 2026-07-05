@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use ferralloc_bench::{allocator_target::TARGETS, workload};
+use runic_bench::{allocator_target::TARGETS, workload};
 
 const SMALL_OPS: usize = 512;
 const RANDOM_OPS: usize = 2_000;

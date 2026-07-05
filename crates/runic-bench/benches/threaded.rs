@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use ferralloc_bench::{allocator_target::TARGETS, threaded};
+use runic_bench::{allocator_target::TARGETS, threaded};
 
 const THREAD_COUNTS: &[usize] = &[2, 4];
 const OPS_PER_THREAD: usize = 512;
