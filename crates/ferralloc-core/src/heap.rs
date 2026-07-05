@@ -6,6 +6,7 @@ use core::{
 use crate::{
     extent::Extent,
     extent_table::{ExtentReservation, ExtentTable},
+    heap_config::HeapConfig,
     layout::LayoutSpec,
     os_memory::OsMemory,
     page_map::{PageEntry, PageMap, PageRange},
@@ -33,9 +34,13 @@ pub(crate) enum HeapError {
 
 impl Heap {
     pub(crate) const fn new() -> Self {
+        Self::with_config(HeapConfig::default())
+    }
+
+    pub(crate) const fn with_config(config: HeapConfig) -> Self {
         Self {
-            runs: RunTable::new(),
-            extents: ExtentTable::new(),
+            runs: RunTable::new(config.run_capacity()),
+            extents: ExtentTable::new(config.extent_capacity()),
             pages: PageMap::new(),
             active: [None; SizeClasses::COUNT],
         }
@@ -312,7 +317,10 @@ impl Heap {
 
 #[cfg(test)]
 mod tests {
-    use crate::{extent::ExtentId, page_map::PageRange, run::RunId, size_class::SizeClasses};
+    use crate::{
+        extent::ExtentId, heap_config::HeapConfig, page_map::PageRange, run::RunId,
+        size_class::SizeClasses, table_capacity::TableCapacity,
+    };
 
     use super::*;
 
@@ -332,9 +340,15 @@ mod tests {
         Extent::new(id, mapping, spec).unwrap()
     }
 
+    fn test_heap() -> Heap {
+        let capacity = TableCapacity::new(4).unwrap();
+
+        Heap::with_config(HeapConfig::new(capacity, capacity))
+    }
+
     #[test]
     fn failed_run_page_publication_removes_table_entry() {
-        let mut heap = Heap::new();
+        let mut heap = test_heap();
         let reservation = heap.runs.reserve().unwrap();
         let id = reservation.id();
         let run = reusable_run(id);
@@ -351,7 +365,7 @@ mod tests {
 
     #[test]
     fn failed_extent_page_publication_removes_table_entry() {
-        let mut heap = Heap::new();
+        let mut heap = test_heap();
         let reservation = heap.extents.reserve().unwrap();
         let id = reservation.id();
         let extent = reusable_extent(id);

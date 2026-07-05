@@ -3,6 +3,7 @@ use core::{mem::MaybeUninit, ptr::NonNull, slice};
 use crate::{
     extent::{Extent, ExtentId},
     os_memory::OsMemory,
+    table_capacity::TableCapacity,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -25,29 +26,26 @@ impl ExtentReservation {
 pub(crate) struct ExtentTable {
     slots: Option<ExtentSlots>,
     next: u32,
+    capacity: TableCapacity,
 }
 
 impl ExtentTable {
-    #[cfg(not(test))]
-    pub(crate) const MAX_EXTENTS: usize = 65_536;
-
-    #[cfg(test)]
-    pub(crate) const MAX_EXTENTS: usize = 1024;
-
-    pub(crate) const fn new() -> Self {
+    pub(crate) const fn new(capacity: TableCapacity) -> Self {
         Self {
             slots: None,
             next: 0,
+            capacity,
         }
     }
 
     pub(crate) fn reserve(&mut self) -> Option<ExtentReservation> {
+        let capacity = self.capacity.get();
         let start = usize::try_from(self.next).ok()?;
 
-        for offset in 0..Self::MAX_EXTENTS {
+        for offset in 0..capacity {
             let sum = start.checked_add(offset)?;
-            let index = if sum >= Self::MAX_EXTENTS {
-                sum.checked_sub(Self::MAX_EXTENTS)?
+            let index = if sum >= capacity {
+                sum.checked_sub(capacity)?
             } else {
                 sum
             };
@@ -55,7 +53,7 @@ impl ExtentTable {
             let slot = self.slots_mut()?.get_mut(index)?;
 
             if slot.reserve() {
-                let next = if index + 1 == Self::MAX_EXTENTS {
+                let next = if index + 1 == capacity {
                     0
                 } else {
                     index.checked_add(1)?
@@ -114,7 +112,7 @@ impl ExtentTable {
 
     fn slots_mut(&mut self) -> Option<&mut ExtentSlots> {
         if self.slots.is_none() {
-            self.slots = Some(ExtentSlots::new(Self::MAX_EXTENTS)?);
+            self.slots = Some(ExtentSlots::new(self.capacity.get())?);
         }
 
         self.slots.as_mut()
@@ -279,6 +277,7 @@ mod tests {
         extent::{Extent, ExtentId},
         layout::LayoutSpec,
         os_memory::OsMemory,
+        table_capacity::TableCapacity,
     };
 
     use super::*;
@@ -291,9 +290,22 @@ mod tests {
         Extent::new(id, mapping, spec).unwrap()
     }
 
+    fn table_with_capacity(capacity: usize) -> ExtentTable {
+        ExtentTable::new(TableCapacity::new(capacity).unwrap())
+    }
+
+    #[test]
+    fn extent_table_respects_injected_capacity() {
+        let mut table = table_with_capacity(2);
+
+        assert_eq!(table.reserve().unwrap().id().get(), 0);
+        assert_eq!(table.reserve().unwrap().id().get(), 1);
+        assert_eq!(table.reserve(), None);
+    }
+
     #[test]
     fn extent_table_insert_get_round_trip() {
-        let mut table = ExtentTable::new();
+        let mut table = table_with_capacity(4);
         let reservation = table.reserve().unwrap();
         let extent = reusable_extent(reservation.id());
 
@@ -306,7 +318,7 @@ mod tests {
 
     #[test]
     fn extent_table_invalid_insert_releases_reservation() {
-        let mut table = ExtentTable::new();
+        let mut table = table_with_capacity(4);
         let reservation = table.reserve().unwrap();
         let released = reservation.id();
         let wrong_id = ExtentId::new(released.get() + 1).unwrap();
@@ -317,8 +329,7 @@ mod tests {
             Err(ExtentTableError::InvalidReservation)
         );
 
-        let max_extents = u32::try_from(ExtentTable::MAX_EXTENTS).unwrap();
-        for expected in 1..max_extents {
+        for expected in 1..4 {
             assert_eq!(table.reserve().unwrap().id().get(), expected);
         }
         assert_eq!(table.reserve().unwrap().id(), released);

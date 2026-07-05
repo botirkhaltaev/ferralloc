@@ -16,11 +16,13 @@ pub(crate) mod extent;
 pub(crate) mod extent_table;
 pub(crate) mod free_list;
 pub(crate) mod heap;
+pub(crate) mod heap_config;
 pub(crate) mod layout;
 pub(crate) mod os_memory;
 pub(crate) mod page_map;
 pub(crate) mod run;
 pub(crate) mod run_table;
 pub(crate) mod size_class;
+pub(crate) mod table_capacity;
 
 pub use allocator::Allocator;
