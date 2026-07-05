@@ -1,0 +1,29 @@
+# runic-alloc
+
+`runic-alloc` is Runic's public `GlobalAlloc` wrapper crate.
+
+The package name on crates.io is `runic-alloc`; the Rust library name is `runic`.
+
+## Install
+
+```sh
+cargo add runic-alloc
+```
+
+## Usage
+
+```rust
+use runic::RunicAlloc;
+
+#[global_allocator]
+static GLOBAL: RunicAlloc = RunicAlloc;
+```
+
+## Crate Shape
+
+- `src/lib.rs`: public export surface.
+- `src/global.rs`: `RunicAlloc` implementation of `GlobalAlloc`.
+- `src/bin/abort_case.rs`: subprocess binary used by abort tests.
+- `tests/`: global allocator smoke and abort-case integration tests.
+
+Most allocator mechanics live in `runic-core`.

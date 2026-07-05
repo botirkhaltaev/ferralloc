@@ -2,6 +2,8 @@
 
 This crate contains Runic's allocator iteration benchsuite.
 
+It is internal to the workspace and is not published to crates.io.
+
 ## Timing Benchmarks
 
 Run all Criterion benchmarks:
@@ -39,3 +41,5 @@ The RSS runner spawns a fresh subprocess per allocator/workload pair so rows do 
 ## Validation
 
 Benchmark workloads touch allocated memory, validate returned alignment, and check sampled realloc prefix preservation. Full byte-for-byte randomized correctness remains covered by the allocator test suite; benchmark validation is sampled so timing is not dominated by memory scanning.
+
+See `src/README.md` and `benches/README.md` for module and benchmark-target details.
