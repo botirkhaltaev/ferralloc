@@ -103,7 +103,7 @@ impl Heap {
             PageEntry::Run(id) => {
                 if self
                     .runs
-                    .allocation_satisfies(id, old_ptr, new_spec)
+                    .resize_in_place(id, old_ptr, new_spec)
                     .map_err(HeapError::from)?
                 {
                     return Ok(ptr);
@@ -112,7 +112,7 @@ impl Heap {
             PageEntry::Extent(id) => {
                 if self
                     .extents
-                    .allocation_satisfies(id, old_ptr, new_spec)
+                    .resize_in_place(id, old_ptr, new_spec)
                     .map_err(HeapError::from)?
                 {
                     return Ok(ptr);
@@ -306,6 +306,32 @@ mod tests {
         }
 
         let new = Layout::from_size_align(128 * 1024, 4096).unwrap();
+        assert_eq!(heap.dealloc(new_ptr, new), Ok(()));
+    }
+
+    #[test]
+    fn heap_realloc_grows_extent_within_published_page_range() {
+        let mut heap = test_heap();
+        let old = Layout::from_size_align(64 * 1024 - 1, 8).unwrap();
+        let ptr = heap.alloc(old);
+
+        assert!(!ptr.is_null());
+        for index in 0..4096 {
+            let value = u8::try_from(index % 251).unwrap().wrapping_add(1);
+            // SAFETY: ptr was allocated for old.size() bytes above and index is within that range.
+            unsafe { ptr.add(index).write(value) };
+        }
+
+        let new_ptr = heap.realloc(ptr, old, 64 * 1024).unwrap();
+
+        assert_eq!(new_ptr, ptr);
+        for index in 0..4096 {
+            let value = u8::try_from(index % 251).unwrap().wrapping_add(1);
+            // SAFETY: new_ptr is the same live allocation and these prefix bytes remain initialized.
+            assert_eq!(unsafe { new_ptr.add(index).read() }, value);
+        }
+
+        let new = Layout::from_size_align(64 * 1024, 8).unwrap();
         assert_eq!(heap.dealloc(new_ptr, new), Ok(()));
     }
 

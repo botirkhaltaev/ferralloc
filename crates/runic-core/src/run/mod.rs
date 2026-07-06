@@ -259,16 +259,14 @@ impl Run {
         }
     }
 
-    pub(crate) fn allocated_block_satisfies(
+    pub(crate) fn resize_in_place(
         &self,
         ptr: NonNull<u8>,
         spec: LayoutSpec,
     ) -> Result<bool, RunError> {
         self.allocated_block_at(ptr)?;
 
-        Ok(self.block_size >= spec.size()
-            && self.block_size.is_multiple_of(spec.align())
-            && ptr.as_ptr().addr().is_multiple_of(spec.align()))
+        Ok(self.block_size >= spec.size() && ptr.as_ptr().addr().is_multiple_of(spec.align()))
     }
 
     pub(crate) fn block_at(&self, ptr: NonNull<u8>) -> Option<RunBlock> {
@@ -365,14 +363,14 @@ mod tests {
     }
 
     #[test]
-    fn reusable_run_reports_allocated_block_satisfies_same_class_layout() {
+    fn reusable_run_resizes_block_in_place_for_same_class_layout() {
         let mapping = OsMemory::map(RUN_SIZE).unwrap();
         let mut run = Run::new(RunId::from_index(7).unwrap(), mapping, class_for(64, 8));
         let old = LayoutSpec::from_size_align(48, 8).unwrap();
         let new = LayoutSpec::from_size_align(64, 8).unwrap();
         let ptr = run.allocate(old).unwrap();
 
-        assert_eq!(run.allocated_block_satisfies(ptr, new), Ok(true));
+        assert_eq!(run.resize_in_place(ptr, new), Ok(true));
     }
 
     #[test]
@@ -383,7 +381,7 @@ mod tests {
         let new = LayoutSpec::from_size_align(80, 8).unwrap();
         let ptr = run.allocate(old).unwrap();
 
-        assert_eq!(run.allocated_block_satisfies(ptr, new), Ok(false));
+        assert_eq!(run.resize_in_place(ptr, new), Ok(false));
     }
 
     #[test]

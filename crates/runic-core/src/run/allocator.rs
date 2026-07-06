@@ -91,7 +91,7 @@ impl RunAllocator {
         Ok(())
     }
 
-    pub(crate) fn allocation_satisfies(
+    pub(crate) fn resize_in_place(
         &self,
         id: RunId,
         ptr: NonNull<u8>,
@@ -101,7 +101,7 @@ impl RunAllocator {
             return Err(RunAllocatorError::MissingRun);
         };
 
-        run.allocated_block_satisfies(ptr, spec)
+        run.resize_in_place(ptr, spec)
             .map_err(RunAllocatorError::from)
     }
 
