@@ -9,7 +9,7 @@ use crate::{
     layout::LayoutSpec,
     mapping_cache::MappingCache,
     os_memory::OsMemory,
-    page_map::{EmptyL2Tables, PageEntry, PageMap, PageRange},
+    page_map::{L2TablePolicy, PageEntry, PageMap, PageRange},
     run::{RUN_SIZE, Run, RunError, RunId},
     run_table::{RunReservation, RunTable},
     size_class::{SizeClass, SizeClasses},
@@ -98,9 +98,9 @@ impl Heap {
                 };
 
                 let empty_l2_tables = if retain_mapping {
-                    EmptyL2Tables::Retain
+                    L2TablePolicy::RetainEmpty
                 } else {
-                    EmptyL2Tables::Release
+                    L2TablePolicy::ReleaseEmpty
                 };
                 self.pages
                     .remove(page_range, PageEntry::Extent(id), empty_l2_tables)

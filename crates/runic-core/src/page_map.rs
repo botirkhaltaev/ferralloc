@@ -33,9 +33,9 @@ pub(crate) enum PageEntry {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum EmptyL2Tables {
-    Release,
-    Retain,
+pub(crate) enum L2TablePolicy {
+    ReleaseEmpty,
+    RetainEmpty,
 }
 
 #[derive(Clone, Copy)]
@@ -215,10 +215,20 @@ impl L1Table {
         self.entries.get(l1_index.get())?.page_entry(l2_index)
     }
 
+    fn entry(&self, index: L1Index) -> Result<&L1Entry, PageMapError> {
+        self.entries
+            .get(index.get())
+            .ok_or(PageMapError::InvalidRange)
+    }
+
+    fn entry_mut(&mut self, index: L1Index) -> Result<&mut L1Entry, PageMapError> {
+        self.entries
+            .get_mut(index.get())
+            .ok_or(PageMapError::InvalidRange)
+    }
+
     fn ensure_l2_table(&mut self, index: L1Index) -> Result<(), PageMapError> {
-        let Some(entry) = self.entries.get_mut(index.get()) else {
-            return Err(PageMapError::InvalidRange);
-        };
+        let entry = self.entry_mut(index)?;
 
         if entry.has_l2_table() {
             return Ok(());
@@ -232,7 +242,7 @@ impl L1Table {
         Ok(())
     }
 
-    fn clear_empty_l2(&mut self, index: L1Index) -> bool {
+    fn release_empty_l2(&mut self, index: L1Index) -> bool {
         self.entries.get_mut(index.get()).is_some_and(|entry| {
             if !entry.is_empty_l2() {
                 return false;
@@ -240,46 +250,6 @@ impl L1Table {
 
             entry.clear_l2()
         })
-    }
-
-    fn segment_contains(
-        &self,
-        segment: PageSegment,
-        expected: MapEntry,
-    ) -> Result<bool, PageMapError> {
-        self.entries
-            .get(segment.l1.get())
-            .ok_or(PageMapError::InvalidRange)?
-            .segment_contains(segment.l2, expected)
-    }
-
-    fn publish_empty_pages(
-        &mut self,
-        segment: PageSegment,
-        value: MapEntry,
-    ) -> Result<(), PageMapError> {
-        self.entries
-            .get_mut(segment.l1.get())
-            .ok_or(PageMapError::InvalidRange)?
-            .publish_empty_pages(segment.l2, value)
-    }
-
-    fn publish_empty_span(
-        &mut self,
-        segment: PageSegment,
-        value: MapEntry,
-    ) -> Result<(), PageMapError> {
-        self.entries
-            .get_mut(segment.l1.get())
-            .ok_or(PageMapError::InvalidRange)?
-            .publish_empty_span(segment.l2, value)
-    }
-
-    fn clear_occupied_segment(&mut self, segment: PageSegment) -> Result<(), PageMapError> {
-        self.entries
-            .get_mut(segment.l1.get())
-            .ok_or(PageMapError::InvalidRange)?
-            .clear_occupied_segment(segment.l2)
     }
 }
 
@@ -353,11 +323,7 @@ impl L1Entry {
         removed
     }
 
-    fn segment_contains(
-        &self,
-        segment: L2Segment,
-        expected: MapEntry,
-    ) -> Result<bool, PageMapError> {
+    fn owns_segment(&self, segment: L2Segment, expected: MapEntry) -> Result<bool, PageMapError> {
         let Some(table) = self.l2_table_ref() else {
             return Ok(expected.is_empty());
         };
@@ -366,18 +332,14 @@ impl L1Entry {
             return Ok(true);
         }
 
-        table.segment_contains(segment, expected)
+        table.owns_segment(segment, expected)
     }
 
     fn page_entry(&self, index: L2Index) -> Option<MapEntry> {
         self.l2_table_ref()?.get(index)
     }
 
-    fn publish_empty_pages(
-        &mut self,
-        segment: L2Segment,
-        value: MapEntry,
-    ) -> Result<(), PageMapError> {
+    fn assign_direct(&mut self, segment: L2Segment, value: MapEntry) -> Result<(), PageMapError> {
         let occupied_pages = self
             .occupied_pages
             .checked_add(segment.pages())
@@ -386,17 +348,13 @@ impl L1Entry {
             .l2_table_mut()
             .ok_or(PageMapError::MetadataAllocFailed)?;
 
-        table.publish_empty_pages(segment, value)?;
+        table.assign_direct(segment, value)?;
         self.occupied_pages = occupied_pages;
 
         Ok(())
     }
 
-    fn publish_empty_span(
-        &mut self,
-        segment: L2Segment,
-        value: MapEntry,
-    ) -> Result<(), PageMapError> {
+    fn assign_span(&mut self, segment: L2Segment, value: MapEntry) -> Result<(), PageMapError> {
         let occupied_pages = self
             .occupied_pages
             .checked_add(segment.pages())
@@ -405,20 +363,20 @@ impl L1Entry {
             .l2_table_mut()
             .ok_or(PageMapError::MetadataAllocFailed)?;
 
-        table.publish_empty_span(segment, value)?;
+        table.assign_span(segment, value)?;
         self.occupied_pages = occupied_pages;
 
         Ok(())
     }
 
-    fn clear_occupied_segment(&mut self, segment: L2Segment) -> Result<(), PageMapError> {
+    fn clear_segment(&mut self, segment: L2Segment) -> Result<(), PageMapError> {
         let occupied_pages = self
             .occupied_pages
             .checked_sub(segment.pages())
             .ok_or(PageMapError::UnexpectedEntry)?;
         let table = self.l2_table_mut().ok_or(PageMapError::UnexpectedEntry)?;
 
-        table.clear_occupied_segment(segment)?;
+        table.clear_segment(segment)?;
         self.occupied_pages = occupied_pages;
 
         Ok(())
@@ -468,13 +426,9 @@ impl L2Table {
             .find_map(|slot| slot.record_containing(index).map(SpanRecord::entry))
     }
 
-    fn segment_contains(
-        &self,
-        segment: L2Segment,
-        expected: MapEntry,
-    ) -> Result<bool, PageMapError> {
+    fn owns_segment(&self, segment: L2Segment, expected: MapEntry) -> Result<bool, PageMapError> {
         if expected.is_empty() {
-            return Ok(self.segment_is_empty(segment));
+            return Ok(self.segment_is_free(segment));
         }
 
         let pages = self
@@ -491,19 +445,11 @@ impl L2Table {
             .any(|slot| slot.matches(segment, expected)))
     }
 
-    fn publish_empty_pages(
-        &mut self,
-        segment: L2Segment,
-        value: MapEntry,
-    ) -> Result<(), PageMapError> {
+    fn assign_direct(&mut self, segment: L2Segment, value: MapEntry) -> Result<(), PageMapError> {
         self.write_pages(segment, value)
     }
 
-    fn publish_empty_span(
-        &mut self,
-        segment: L2Segment,
-        value: MapEntry,
-    ) -> Result<(), PageMapError> {
+    fn assign_span(&mut self, segment: L2Segment, value: MapEntry) -> Result<(), PageMapError> {
         if self.install_span(segment, value) {
             return Ok(());
         }
@@ -511,7 +457,7 @@ impl L2Table {
         self.write_pages(segment, value)
     }
 
-    fn clear_occupied_segment(&mut self, segment: L2Segment) -> Result<(), PageMapError> {
+    fn clear_segment(&mut self, segment: L2Segment) -> Result<(), PageMapError> {
         if self.clear_span(segment) {
             return Ok(());
         }
@@ -519,7 +465,7 @@ impl L2Table {
         self.write_pages(segment, MapEntry::empty())
     }
 
-    fn segment_is_empty(&self, segment: L2Segment) -> bool {
+    fn segment_is_free(&self, segment: L2Segment) -> bool {
         let Some(pages) = self.pages.get(segment.range()) else {
             return false;
         };
@@ -747,8 +693,12 @@ impl PageMap {
 
             for segment in range.segments() {
                 let published = match entry {
-                    PageEntry::Run(_) => l1.publish_empty_pages(segment, occupied),
-                    PageEntry::Extent(_) => l1.publish_empty_span(segment, occupied),
+                    PageEntry::Run(_) => l1
+                        .entry_mut(segment.l1)?
+                        .assign_direct(segment.l2, occupied),
+                    PageEntry::Extent(_) => {
+                        l1.entry_mut(segment.l1)?.assign_span(segment.l2, occupied)
+                    }
                 };
 
                 if let Err(error) = published {
@@ -763,8 +713,8 @@ impl PageMap {
         };
 
         if let Err(error) = result {
-            self.clear_segments_containing(range, occupied);
-            self.clear_empty_l2_tables(range);
+            self.rollback_insert(range, occupied);
+            self.release_empty_l2_tables(range);
 
             return Err(error);
         }
@@ -776,40 +726,46 @@ impl PageMap {
         &mut self,
         range: PageRange,
         expected: PageEntry,
-        empty_l2_tables: EmptyL2Tables,
+        l2_table_policy: L2TablePolicy,
     ) -> Result<(), PageMapError> {
         self.validate_remove(range, expected)?;
 
         let l1 = self.l1_mut().ok_or(PageMapError::UnexpectedEntry)?;
         for segment in range.segments() {
-            l1.clear_occupied_segment(segment)?;
+            l1.entry_mut(segment.l1)?.clear_segment(segment.l2)?;
         }
 
-        if empty_l2_tables == EmptyL2Tables::Release {
-            self.clear_empty_l2_tables(range);
+        if l2_table_policy == L2TablePolicy::ReleaseEmpty {
+            self.release_empty_l2_tables(range);
         }
 
         Ok(())
     }
 
-    fn clear_segments_containing(&mut self, range: PageRange, entry: MapEntry) {
+    fn rollback_insert(&mut self, range: PageRange, entry: MapEntry) {
         let Some(l1) = self.l1_mut() else {
             return;
         };
 
         for segment in range.segments() {
-            if l1.segment_contains(segment, entry) != Ok(true) {
+            if l1
+                .entry(segment.l1)
+                .and_then(|entry_slot| entry_slot.owns_segment(segment.l2, entry))
+                != Ok(true)
+            {
                 continue;
             }
 
-            let _ = l1.clear_occupied_segment(segment);
+            let _ = l1
+                .entry_mut(segment.l1)
+                .and_then(|entry_slot| entry_slot.clear_segment(segment.l2));
         }
     }
 
-    fn clear_empty_l2_tables(&mut self, range: PageRange) {
+    fn release_empty_l2_tables(&mut self, range: PageRange) {
         for segment in range.segments() {
             if let Some(l1) = self.l1_mut() {
-                let _ = l1.clear_empty_l2(segment.l1);
+                let _ = l1.release_empty_l2(segment.l1);
             }
         }
     }
@@ -845,7 +801,7 @@ impl PageMap {
 
         let empty = MapEntry::empty();
         for segment in range.segments() {
-            if !l1.segment_contains(segment, empty)? {
+            if !l1.entry(segment.l1)?.owns_segment(segment.l2, empty)? {
                 return Err(PageMapError::Overlap);
             }
         }
@@ -861,7 +817,7 @@ impl PageMap {
         };
 
         for segment in range.segments() {
-            if !l1.segment_contains(segment, expected)? {
+            if !l1.entry(segment.l1)?.owns_segment(segment.l2, expected)? {
                 return Err(PageMapError::UnexpectedEntry);
             }
         }
@@ -885,7 +841,7 @@ impl PageMap {
         };
 
         if let Err(error) = result {
-            self.clear_empty_l2_tables(range);
+            self.release_empty_l2_tables(range);
             return Err(error);
         }
 
@@ -1072,7 +1028,10 @@ mod tests {
         let range = mapping.page_range();
 
         assert!(map.insert(range, run(8)).is_ok());
-        assert_eq!(map.remove(range, run(8), EmptyL2Tables::Release), Ok(()));
+        assert_eq!(
+            map.remove(range, run(8), L2TablePolicy::ReleaseEmpty),
+            Ok(())
+        );
 
         assert!(map.get(mapping.base()).is_none());
         let second = mapping.ptr_at(PAGE_SIZE);
@@ -1088,7 +1047,10 @@ mod tests {
         assert!(map.insert(range, run(1)).is_ok());
         assert!(has_l2_table(&map, mapping.base()));
 
-        assert_eq!(map.remove(range, run(1), EmptyL2Tables::Release), Ok(()));
+        assert_eq!(
+            map.remove(range, run(1), L2TablePolicy::ReleaseEmpty),
+            Ok(())
+        );
 
         assert!(map.get(mapping.base()).is_none());
         assert!(!has_l2_table(&map, mapping.base()));
@@ -1103,7 +1065,10 @@ mod tests {
         assert!(map.insert(range, run(1)).is_ok());
         assert!(has_l2_table(&map, mapping.base()));
 
-        assert_eq!(map.remove(range, run(1), EmptyL2Tables::Retain), Ok(()));
+        assert_eq!(
+            map.remove(range, run(1), L2TablePolicy::RetainEmpty),
+            Ok(())
+        );
 
         assert!(map.get(mapping.base()).is_none());
         assert!(has_l2_table(&map, mapping.base()));
@@ -1129,7 +1094,7 @@ mod tests {
             map.remove(
                 PageRange::new(first, PAGE_SIZE).unwrap(),
                 run(1),
-                EmptyL2Tables::Release,
+                L2TablePolicy::ReleaseEmpty,
             ),
             Ok(())
         );
@@ -1164,7 +1129,7 @@ mod tests {
             map.remove(
                 PageRange::new(second, PAGE_SIZE).unwrap(),
                 run(2),
-                EmptyL2Tables::Release,
+                L2TablePolicy::ReleaseEmpty,
             ),
             Ok(())
         );
@@ -1183,7 +1148,7 @@ mod tests {
         assert!(map.insert(range, run(1)).is_ok());
 
         assert_eq!(
-            map.remove(range, run(2), EmptyL2Tables::Release),
+            map.remove(range, run(2), L2TablePolicy::ReleaseEmpty),
             Err(PageMapError::UnexpectedEntry)
         );
         assert_eq!(map.get(mapping.base()), Some(run(1)));
@@ -1202,7 +1167,7 @@ mod tests {
         );
 
         assert_eq!(
-            map.remove(mapping.page_range(), run(1), EmptyL2Tables::Release),
+            map.remove(mapping.page_range(), run(1), L2TablePolicy::ReleaseEmpty),
             Err(PageMapError::UnexpectedEntry)
         );
         assert_eq!(map.get(first), Some(run(1)));
@@ -1226,7 +1191,7 @@ mod tests {
         );
 
         assert_eq!(
-            map.remove(mapping.page_range(), run(1), EmptyL2Tables::Release),
+            map.remove(mapping.page_range(), run(1), L2TablePolicy::ReleaseEmpty),
             Err(PageMapError::UnexpectedEntry)
         );
         assert_eq!(map.get(first), Some(run(1)));
@@ -1254,7 +1219,7 @@ mod tests {
             map.remove(
                 PageRange::new(before_boundary, PAGE_SIZE * 2).unwrap(),
                 run(1),
-                EmptyL2Tables::Release,
+                L2TablePolicy::ReleaseEmpty,
             ),
             Err(PageMapError::UnexpectedEntry)
         );
@@ -1392,7 +1357,7 @@ mod tests {
             map.remove(
                 PageRange::new(fallback, PAGE_SIZE).unwrap(),
                 extent(10_000),
-                EmptyL2Tables::Retain,
+                L2TablePolicy::RetainEmpty,
             ),
             Ok(())
         );
@@ -1409,7 +1374,10 @@ mod tests {
         let last = mapping.ptr_at(mapping.len() - 1);
 
         assert!(map.insert(range, run(10)).is_ok());
-        assert_eq!(map.remove(range, run(10), EmptyL2Tables::Release), Ok(()));
+        assert_eq!(
+            map.remove(range, run(10), L2TablePolicy::ReleaseEmpty),
+            Ok(())
+        );
 
         assert!(map.get(mapping.base()).is_none());
         assert!(map.get(boundary).is_none());
