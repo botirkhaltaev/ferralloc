@@ -1,6 +1,6 @@
 use crate::{
     extent::{Extent, ExtentId},
-    metadata_slot::{SlotStore, SlotStoreError},
+    slot_store::{SlotStore, SlotStoreError},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

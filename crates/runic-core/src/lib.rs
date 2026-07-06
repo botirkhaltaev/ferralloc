@@ -18,11 +18,11 @@ pub(crate) mod free_list;
 pub(crate) mod heap;
 pub(crate) mod layout;
 pub(crate) mod mapping_cache;
-pub(crate) mod metadata_slot;
 pub(crate) mod os_memory;
 pub(crate) mod page_map;
 pub(crate) mod run;
 pub(crate) mod run_table;
 pub(crate) mod size_class;
+pub(crate) mod slot_store;
 
 pub use allocator::Allocator;

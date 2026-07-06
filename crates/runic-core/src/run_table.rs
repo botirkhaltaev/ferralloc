@@ -2,9 +2,9 @@ use core::ptr::NonNull;
 
 use crate::{
     layout::LayoutSpec,
-    metadata_slot::{SlotStore, SlotStoreError},
     run::{Run, RunId},
     size_class::SizeClass,
+    slot_store::{SlotStore, SlotStoreError},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
