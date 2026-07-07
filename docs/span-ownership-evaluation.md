@@ -4,14 +4,14 @@ Issue: #24
 
 Runic currently models mapped memory through separate domain entities:
 
-- `Run` owns small-allocation block state and the run free list.
+- `Run` owns small-allocation geometry and bitmap-backed block state.
 - `Extent` owns dedicated allocation metadata.
 - `PageMap` owns address lookup publication.
-- `RunTable` and `ExtentTable` own metadata slots.
+- `RunArena` and `ExtentArena` own metadata slots.
 - `MappingCache` owns reusable extent mappings.
 - `Heap` coordinates lifecycle transitions.
 
-This split is explicit and has worked for the v0.2 correctness milestone, but thread-local heaps, remote frees, decay policy, hardening, and hugepage-aware allocation will all increase ownership pressure.
+This split is explicit and worked for the v0.3 single-thread metadata milestone, but thread-local heaps, remote frees, decay policy, hardening, and hugepage-aware allocation will all increase ownership pressure.
 
 ## Evaluation
 

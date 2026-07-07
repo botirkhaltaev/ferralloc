@@ -14,7 +14,7 @@ This is not correct. If user code keeps a stale pointer and frees it while the c
 
 ### Cache Freed Blocks On Deallocation
 
-Another attempted shape moved validated frees into a small cache instead of the run free list. This preserves double-free detection only if cached blocks remain marked free and are removed from the run free list.
+Another attempted shape moved validated frees into a small cache instead of returning directly to run state. This preserves double-free detection only if cached blocks remain represented by exactly one owner.
 
 Measured locally, that added state transitions and cache management on every free and regressed the target workloads:
 
@@ -34,8 +34,8 @@ Any future cache must preserve these rules:
 
 - A block held by an internal cache must not be reported as a live user allocation.
 - A stale free of a cached block must still fail as a double free or invalid free.
-- Cached blocks must not also be reachable from the run free list.
-- A run should be linked as available only when the run free list can satisfy an allocation, not merely because cached blocks exist.
+- Cached blocks must not also be available in the run bitmap.
+- A run should be linked as available only when its owned reusable state can satisfy an allocation, not merely because cached blocks exist elsewhere.
 - The cache must not allocate internally.
 
 ## Direction
@@ -44,7 +44,7 @@ The next viable design should reduce both allocation and deallocation hot-path w
 
 Promising directions:
 
-- Add a block-state representation that models user-allocated, free-list-free, and cache-free blocks without extra bitmap passes.
+- Add a block-state representation that models user-allocated, run-reusable, and cache-owned blocks without extra bitmap passes.
 - Pair the cache with a validated fast deallocation path, or defer this work until thread-local heap ownership can make cache hits avoid global metadata work.
 - Re-benchmark against `single_size_churn_64`, `small_biased_random`, and abort tests before accepting any implementation.
 

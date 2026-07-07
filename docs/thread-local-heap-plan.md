@@ -2,7 +2,7 @@
 
 Issue: #8
 
-Runic v0.2 still uses one global heap lock. That is correct for the current correctness milestone, but threaded benchmarks show the expected ceiling for this architecture.
+Runic v0.3 still uses one global heap lock. That is correct for the current correctness and single-thread optimization milestone, but threaded benchmarks show the expected ceiling for this architecture.
 
 ## Current Signal
 
@@ -55,7 +55,7 @@ Before implementation, Runic needs an explicit representation for cached block o
 
 - A block in a local cache must not be reported as a live user allocation.
 - A stale free of a locally cached block must not be accepted as a valid free.
-- A cached block must not also be reachable from a run free list.
+- A cached block must not also be reachable from the run bitmap as available.
 - A local cache must know which run or future region/span owns each cached block.
 - The design must define what happens when the freeing thread is not the owning local heap.
 

@@ -21,7 +21,7 @@ Runic reduces and audits the unsafe core, encodes allocator invariants explicitl
 ## Current Milestone
 
 ```text
-A global-lock Rust allocator that can run real Rust programs and survive randomized allocation traces.
+A global-lock Rust allocator with optimized single-thread small allocation paths, explicit metadata ownership, and randomized allocation trace coverage.
 ```
 
 Correctness comes before speed.
@@ -39,6 +39,8 @@ mmap-backed runs for size-classed allocations
 mmap-backed extents for dedicated allocations
 out-of-line metadata
 page-indexed pointer lookup
+per-size-class available run lists
+bitmap-backed run block state
 run block-boundary checks
 extent exact-pointer checks
 basic realloc
@@ -82,10 +84,11 @@ GlobalAlloc
       -> Allocator
           -> Heap
               -> PageMap
-              -> RunTable
-              -> ExtentTable
+              -> RunHeap
+                  -> RunArena
+              -> ExtentHeap
+                  -> ExtentArena
               -> Run
-                  -> FreeList
               -> Extent
               -> OsMemory
 ```
@@ -101,12 +104,13 @@ Heap         owns allocation policy and global lock-protected allocator data
 LayoutSpec   owns normalized layout semantics
 SizeClasses  owns size-class selection
 OsMemory     owns mmap and munmap
-Run          owns size-class fixed-block allocation metadata
+RunHeap      owns small-allocation policy and per-class available run lists
+RunArena     owns out-of-line run metadata storage
+ExtentHeap   owns dedicated allocation policy and mapping reuse
+ExtentArena  owns out-of-line extent metadata storage
+Run          owns size-class fixed-block allocation metadata and block bitmap state
 Extent       owns dedicated allocation metadata
-FreeList     owns the intrusive free-block chain
-RunTable     owns out-of-line run metadata storage
-ExtentTable  owns out-of-line extent metadata storage
-PageMap      owns page-indexed pointer lookup
+PageMap      owns page-indexed owner-pointer lookup
 ```
 
 ## Workspace
@@ -147,10 +151,10 @@ Default tests should cover:
 ```text
 layout normalization and overflow checks
 size-class alignment invariants
-free-list LIFO behavior
+bitmap block-state behavior
 mmap mapping and writability
 run block uniqueness and boundary checks
-run table reservation, insertion, mutation, removal
+run arena reservation, insertion, mutation, removal
 page map lookup, removal, overlap rejection, L2 boundary crossing
 small and large allocation paths
 alignment matrices
@@ -165,14 +169,13 @@ Abort tests must run in subprocesses, not inside the test harness process.
 
 ## Known Follow-Ups
 
-Track these as GitHub issues instead of expanding v0.1 scope:
+Track these as GitHub issues instead of expanding current release scope:
 
 ```text
 Improve PageMap metadata allocation.
-Add block-state tracking for double-free detection.
-Revisit RunTable test/production capacity differences.
-Add per-size-class available run lists.
-Add extent reuse to avoid mmap/munmap churn.
+Improve local small-allocation ownership without adding thread-local heaps yet.
+Revisit run/extent arena test and production capacity differences.
+Refine extent reuse and release policy.
 Use profiling data to plan thread-local heap work.
 ```
 
@@ -198,9 +201,9 @@ large_alloc_churn_256k, 100k ops:
 Interpretation:
 
 ```text
-Small allocation random traces are bottlenecked by RunTable fallback scans after
-the active run misses. Add per-size-class available run lists before adding
-thread-local heaps.
+Small allocation random traces have moved past metadata-table fallback scans. Keep the
+next optimization structural: a first-class local ownership model that can later
+evolve into thread-local heaps.
 
 Dedicated extent churn is bottlenecked by mmap/munmap and page faults. Add a
 bounded extent reuse policy before treating large-allocation benchmark results as
@@ -213,14 +216,11 @@ profiling data to shape, not rush, the later thread-local heap milestone.
 ## Later Milestones
 
 ```text
-v0.2 block-state tracking
-  Detect double frees and make block state explicit.
-
-v0.3 available run lists
-  Replace RunTable fallback scans with per-size-class available run tracking.
+v0.3 optimized global-lock metadata paths
+  Use available run lists, pointerized owner lookup, arenas, and bitmap-backed run state.
 
 v0.4 extent reuse and release policy
-  Reuse freed dedicated extents before returning mappings to the OS, with a simple bounded policy.
+  Refine retained mapping policy, release decisions, and RSS behavior.
 
 v0.5 thread-local heaps
   Add per-thread fast paths only after run invariants are stable.

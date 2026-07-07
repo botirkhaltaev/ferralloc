@@ -9,8 +9,8 @@ This crate is published for the public `runic-alloc` crate, but most modules are
 - Normalize allocation layouts.
 - Select size classes.
 - Manage mmap-backed runs and dedicated extents.
-- Store out-of-line metadata in run and extent tables.
-- Map returned pointers back to page-map owners.
+- Store out-of-line metadata in run and extent arenas.
+- Map returned pointers back to page-map owner pointers.
 - Enforce run block-boundary checks and extent exact-pointer checks.
 
 ## Usage
@@ -19,7 +19,7 @@ Most users should depend on `runic-alloc`, not `runic-core` directly.
 
 ```toml
 [dependencies]
-runic-alloc = "0.2.0"
+runic-alloc = "0.3.0"
 ```
 
 ## Development

@@ -6,15 +6,11 @@ This directory contains the allocator core. Modules are intentionally organized 
 
 - `address`: address ranges and pointer offset helpers.
 - `allocator`: public core allocator facade and abort boundary used by the global wrapper.
-- `extent`: metadata for one dedicated allocation mapping.
-- `extent_table`: out-of-line extent metadata storage and reservations.
-- `free_list`: intrusive free-block stack used by runs.
+- `extent`: dedicated allocation metadata, extent arena, extent heap, and mapping reuse.
 - `heap`: allocation policy and lock-protected allocator state.
 - `layout`: normalized allocation layout semantics and mapping sizing.
-- `os_memory`: mmap-backed memory ownership and page rounding.
-- `page_map`: page-indexed owner lookup for returned pointers.
-- `run`: size-classed fixed-block allocation metadata.
-- `run_table`: out-of-line run metadata storage and reservations.
+- `memory`: address ranges, mmap-backed memory ownership, and page-indexed owner lookup.
+- `run`: size-classed fixed-block allocation metadata, run arena, and run heap.
 - `size_class`: size-class selection.
 
 ## Invariant

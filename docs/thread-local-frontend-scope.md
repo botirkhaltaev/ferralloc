@@ -65,7 +65,7 @@ The page map remains the source of truth for unknown pointer detection.
 
 The local cache requires block state beyond a single allocated/free bit:
 
-- free in run free list
+- free in run block bitmap
 - owned by local cache
 - user allocated
 - optionally pending remote free

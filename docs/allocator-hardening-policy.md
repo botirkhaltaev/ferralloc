@@ -16,7 +16,7 @@ This is the baseline. New hardening must strengthen detection without hiding bro
 
 Implement hardening in this order:
 
-1. Encoded run free-list links.
+1. Encoded or checked run reusable-block metadata.
 2. Metadata cookies for run and extent records.
 3. Optional delayed reuse for selected small classes.
 4. Guard pages for selected large allocations.
@@ -38,13 +38,13 @@ Do not add environment-variable parsing or string-based configuration inside all
 
 ## Feature Gates
 
-### Encoded Free-List Links
+### Reusable-Block Metadata Checks
 
-Free-list encoding is the first acceptable hardening feature because `FreeList` owns the stored next pointer.
+Reusable-block metadata checks are the first acceptable hardening feature because `Run` owns block-state transitions.
 
 Acceptance:
 
-- encoding and decoding are local to `FreeList`
+- encoding and decoding are local to `Run` block-state handling
 - corruption has a focused detection path
 - no allocator-internal allocation
 - small churn overhead is measured
@@ -65,7 +65,7 @@ Delayed reuse must be represented as explicit block state, not inferred from a s
 
 Acceptance:
 
-- block states distinguish user allocated, free-list eligible, and delayed reuse
+- block states distinguish user allocated, reusable, and delayed reuse
 - queue capacity is fixed
 - overflow behavior is deterministic
 
@@ -123,4 +123,4 @@ If a feature affects RSS or page faults, also run the RSS tool and `perf stat` o
 - no runtime hardening configuration
 - no panic or formatting path in allocator internals
 
-The next hardening implementation should be encoded free-list links, because that feature has a clear owner and does not require changing heap ownership or backend mapping policy.
+The next hardening implementation should protect reusable-block metadata, because that feature has a clear owner and does not require changing heap ownership or backend mapping policy.

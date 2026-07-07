@@ -3,7 +3,7 @@
 ## Project Truth
 
 - Runic is a Rust-native allocator project; build a correct allocator core with explicit, auditable invariants rather than porting another allocator line-for-line.
-- Current milestone: a global-lock allocator that can run real Rust programs and survive randomized allocation traces.
+- Current milestone: a global-lock allocator with optimized single-thread small allocation paths, stable run/extent metadata ownership, and randomized trace coverage.
 - Use `ROADMAP.md` as the source of truth for thesis, scope, architecture, testing direction, and later milestones.
 - Treat this file as a non-deterministic test suite for agents: each bullet is an assertion about acceptable work; if code or plans violate it, refactor instead of working around it.
 
@@ -51,10 +51,12 @@ GlobalAlloc
   -> Allocator
       -> Heap
       -> PageMap
-      -> RunTable
-      -> ExtentTable
+      -> RunHeap
+          -> RunArena
+      -> ExtentHeap
+          -> ExtentArena
       -> Run
-          -> FreeList
+          -> FreeBitmap
       -> Extent
       -> OsMemory
 ```
@@ -63,7 +65,7 @@ GlobalAlloc
 
 - Use `#![deny(unsafe_op_in_unsafe_fn)]`.
 - Keep unsafe code small, explicit, local, and adjacent to the safety reasoning.
-- Prefer methods on `Allocator`, `Heap`, `Run`, `Extent`, `PageMap`, `RunTable`, `ExtentTable`, `FreeList`, `OsMemory`, and `SizeClasses`.
+- Prefer methods on `Allocator`, `Heap`, `RunHeap`, `ExtentHeap`, `RunArena`, `ExtentArena`, `Run`, `Extent`, `PageMap`, `OsMemory`, and `SizeClasses`.
 - Avoid allocator-internal `Vec`, `Box`, `HashMap`, `String`, formatting, or panic paths unless recursion risk is addressed.
 - Abort on invalid frees in v0.1.
 - Do not unwind across allocator boundaries.

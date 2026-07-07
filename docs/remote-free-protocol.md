@@ -29,7 +29,7 @@ On free:
 5. If local, validate and free through local run/cache metadata.
 6. If remote, enqueue a remote-free message for the owner heap.
 
-The freeing thread must not directly touch the owner heap's local cache or free list.
+The freeing thread must not directly touch the owner heap's local cache or reusable block state.
 
 ## Remote-Free Message
 
