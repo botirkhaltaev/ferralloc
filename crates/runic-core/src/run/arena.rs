@@ -4,7 +4,7 @@ use crate::{
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum RunTableError {
+pub(crate) enum RunArenaError {
     InvalidReservation,
     Occupied,
 }
@@ -20,15 +20,15 @@ impl RunReservation {
     }
 }
 
-pub(crate) struct RunTable {
+pub(crate) struct RunArena {
     slots: SlotStore<Run>,
 }
 
-// SAFETY: RunTable owns allocator metadata accessed through the global heap lock.
+// SAFETY: RunArena owns allocator metadata accessed through the global heap lock.
 // Moving ownership to another thread does not permit concurrent metadata mutation.
-unsafe impl Send for RunTable {}
+unsafe impl Send for RunArena {}
 
-impl RunTable {
+impl RunArena {
     pub(crate) const fn new(capacity: u32) -> Self {
         Self {
             slots: SlotStore::new(capacity),
@@ -57,23 +57,19 @@ impl RunTable {
         &mut self,
         reservation: RunReservation,
         run: Run,
-    ) -> Result<RunId, RunTableError> {
+    ) -> Result<RunId, RunArenaError> {
         if reservation.id != run.id() {
             self.release(reservation);
-            return Err(RunTableError::InvalidReservation);
+            return Err(RunArenaError::InvalidReservation);
         }
 
         let Some(index) = Self::index(reservation.id) else {
-            return Err(RunTableError::InvalidReservation);
+            return Err(RunArenaError::InvalidReservation);
         };
 
-        self.slots.insert(index, run).map_err(RunTableError::from)?;
+        self.slots.insert(index, run).map_err(RunArenaError::from)?;
 
         Ok(reservation.id)
-    }
-
-    pub(crate) fn get(&self, id: RunId) -> Option<&Run> {
-        self.slots.get(Self::index(id)?)
     }
 
     pub(crate) fn get_mut(&mut self, id: RunId) -> Option<&mut Run> {
@@ -93,7 +89,7 @@ impl RunTable {
     }
 }
 
-impl From<SlotStoreError> for RunTableError {
+impl From<SlotStoreError> for RunArenaError {
     fn from(error: SlotStoreError) -> Self {
         match error {
             SlotStoreError::InvalidIndex | SlotStoreError::NotReserved => Self::InvalidReservation,
@@ -121,28 +117,28 @@ mod tests {
         Run::new(id, mapping, class)
     }
 
-    fn table_with_capacity(capacity: usize) -> RunTable {
-        RunTable::new(u32::try_from(capacity).unwrap())
+    fn arena_with_capacity(capacity: usize) -> RunArena {
+        RunArena::new(u32::try_from(capacity).unwrap())
     }
 
     #[test]
-    fn run_table_zero_capacity_reserves_none() {
-        let mut table = RunTable::new(0);
+    fn run_arena_zero_capacity_reserves_none() {
+        let mut table = RunArena::new(0);
 
         assert_eq!(table.reserve(), None);
     }
 
     #[test]
-    fn run_table_reserves_ids_from_zero() {
-        let mut table = table_with_capacity(4);
+    fn run_arena_reserves_ids_from_zero() {
+        let mut table = arena_with_capacity(4);
 
         assert_eq!(table.reserve().unwrap().id().index(), 0);
         assert_eq!(table.reserve().unwrap().id().index(), 1);
     }
 
     #[test]
-    fn run_table_respects_injected_capacity() {
-        let mut table = table_with_capacity(2);
+    fn run_arena_respects_injected_capacity() {
+        let mut table = arena_with_capacity(2);
 
         assert_eq!(table.reserve().unwrap().id().index(), 0);
         assert_eq!(table.reserve().unwrap().id().index(), 1);
@@ -150,8 +146,8 @@ mod tests {
     }
 
     #[test]
-    fn run_table_release_makes_reserved_slot_available() {
-        let mut table = table_with_capacity(4);
+    fn run_arena_release_makes_reserved_slot_available() {
+        let mut table = arena_with_capacity(4);
         let first = table.reserve().unwrap();
         let second = table.reserve().unwrap();
 
@@ -165,21 +161,21 @@ mod tests {
     }
 
     #[test]
-    fn run_table_insert_get_round_trip() {
-        let mut table = table_with_capacity(4);
+    fn run_arena_insert_get_round_trip() {
+        let mut table = arena_with_capacity(4);
         let reservation = table.reserve().unwrap();
         let run = reusable_run(reservation.id());
 
         let id = table.insert(reservation, run).unwrap();
-        assert_eq!(table.get(id).unwrap().id(), id);
+        assert_eq!(table.get_mut(id).unwrap().id(), id);
 
         let run = table.remove(id).unwrap();
         assert_eq!(run.id(), id);
     }
 
     #[test]
-    fn run_table_rejects_occupied_slot() {
-        let mut table = table_with_capacity(4);
+    fn run_arena_rejects_occupied_slot() {
+        let mut table = arena_with_capacity(4);
         let reservation = table.reserve().unwrap();
         let first = reusable_run(reservation.id());
         let second = reusable_run(reservation.id());
@@ -187,27 +183,27 @@ mod tests {
         let id = table.insert(reservation, first).unwrap();
         assert_eq!(
             table.insert(RunReservation { id }, second),
-            Err(RunTableError::Occupied)
+            Err(RunArenaError::Occupied)
         );
 
         let _removed = table.remove(id);
     }
 
     #[test]
-    fn run_table_rejects_unreserved_insert() {
-        let mut table = table_with_capacity(4);
+    fn run_arena_rejects_unreserved_insert() {
+        let mut table = arena_with_capacity(4);
         let id = RunId::from_index(0).unwrap();
         let run = reusable_run(id);
 
         assert_eq!(
             table.insert(RunReservation { id }, run),
-            Err(RunTableError::InvalidReservation)
+            Err(RunArenaError::InvalidReservation)
         );
     }
 
     #[test]
-    fn run_table_invalid_insert_releases_reservation() {
-        let mut table = table_with_capacity(4);
+    fn run_arena_invalid_insert_releases_reservation() {
+        let mut table = arena_with_capacity(4);
         let reservation = table.reserve().unwrap();
         let released = reservation.id();
         let wrong_id = RunId::from_index(released.index() + 1).unwrap();
@@ -215,7 +211,7 @@ mod tests {
 
         assert_eq!(
             table.insert(reservation, run),
-            Err(RunTableError::InvalidReservation)
+            Err(RunArenaError::InvalidReservation)
         );
 
         for expected in 1..4 {
@@ -225,14 +221,13 @@ mod tests {
     }
 
     #[test]
-    fn run_table_get_mut_allows_run_mutation() {
-        let mut table = table_with_capacity(4);
+    fn run_arena_get_mut_allows_run_mutation() {
+        let mut table = arena_with_capacity(4);
         let reservation = table.reserve().unwrap();
         let run = reusable_run(reservation.id());
-        let spec = LayoutSpec::from_size_align(64, 8).unwrap();
 
         let id = table.insert(reservation, run).unwrap();
-        let ptr = table.get_mut(id).unwrap().allocate(spec).unwrap();
+        let ptr = table.get_mut(id).unwrap().allocate().unwrap().ptr();
 
         assert!(table.get_mut(id).unwrap().free(ptr).is_ok());
 
@@ -240,14 +235,13 @@ mod tests {
     }
 
     #[test]
-    fn run_table_remove_clears_slot() {
-        let mut table = table_with_capacity(4);
+    fn run_arena_remove_clears_slot() {
+        let mut table = arena_with_capacity(4);
         let reservation = table.reserve().unwrap();
         let run = reusable_run(reservation.id());
 
         let id = table.insert(reservation, run).unwrap();
         assert!(table.remove(id).is_some());
-        assert!(table.get(id).is_none());
         assert!(table.get_mut(id).is_none());
     }
 }
