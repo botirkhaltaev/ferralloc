@@ -15,6 +15,11 @@ pub(crate) struct RunHeap {
     available: [Option<NonNull<Run>>; SizeClasses::COUNT],
 }
 
+// SAFETY: RunHeap owns run metadata and available-list pointers into its own
+// arena. Moving the heap to another thread does not permit concurrent mutation;
+// global allocator access remains synchronized by the allocator boundary.
+unsafe impl Send for RunHeap {}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RunHeapError {
     InvalidPointer,
