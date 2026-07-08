@@ -69,6 +69,10 @@ impl<T> SlotStore<T> {
         self.slot_mut(index)?.get_mut()
     }
 
+    pub(crate) fn get(&self, index: usize) -> Option<&T> {
+        self.slot(index)?.get()
+    }
+
     pub(crate) fn remove(&mut self, index: usize) -> Option<T> {
         self.slot_mut(index)?.remove()
     }
@@ -87,6 +91,10 @@ impl<T> SlotStore<T> {
 
     fn slot_mut(&mut self, index: usize) -> Option<&mut Slot<T>> {
         self.slots.as_mut()?.get_mut(index)
+    }
+
+    fn slot(&self, index: usize) -> Option<&Slot<T>> {
+        self.slots.as_ref()?.get(index)
     }
 }
 
@@ -111,6 +119,17 @@ impl<T> Slots<T> {
 
     fn get_mut(&mut self, index: usize) -> Option<&mut Slot<T>> {
         self.slots_mut().get_mut(index)
+    }
+
+    fn get(&self, index: usize) -> Option<&Slot<T>> {
+        self.slots().get(index)
+    }
+
+    fn slots(&self) -> &[Slot<T>] {
+        debug_assert!(self.len <= self.mapping.range().len() / core::mem::size_of::<Slot<T>>());
+
+        // SAFETY: Slots owns a live mmap storage range for len Slot<T> entries.
+        unsafe { slice::from_raw_parts(self.base.as_ptr(), self.len) }
     }
 
     fn slots_mut(&mut self) -> &mut [Slot<T>] {
@@ -175,6 +194,15 @@ impl<T> Slot<T> {
 
         // SAFETY: occupied state is set only after value.write initializes the slot.
         Some(unsafe { self.value.assume_init_mut() })
+    }
+
+    fn get(&self) -> Option<&T> {
+        if !self.state.is_occupied() {
+            return None;
+        }
+
+        // SAFETY: occupied state is set only after value.write initializes the slot.
+        Some(unsafe { self.value.assume_init_ref() })
     }
 
     fn remove(&mut self) -> Option<T> {
