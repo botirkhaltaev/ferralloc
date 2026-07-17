@@ -1,14 +1,16 @@
 use core::ptr::NonNull;
 
 use crate::{
-    allocation::Allocation,
-    config::AllocatorConfig,
+    allocation::Allocation, config::AllocatorConfig, layout::LayoutSpec, memory::PageMap,
+    ownership::HeapOwner, size_class::SizeClasses,
+};
+
+pub(crate) mod extent;
+pub(crate) mod run;
+
+use self::{
     extent::{Extent, ExtentHeap, ExtentHeapError},
-    layout::LayoutSpec,
-    memory::PageMap,
-    ownership::HeapOwner,
     run::{Run, RunHeap, RunHeapError},
-    size_class::SizeClasses,
 };
 
 pub(crate) struct SharedHeap {
