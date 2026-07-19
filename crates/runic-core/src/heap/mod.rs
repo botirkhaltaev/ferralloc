@@ -13,7 +13,7 @@ pub(crate) mod owner;
 pub(crate) mod run;
 pub(crate) mod table;
 
-pub(crate) use extent::heap::{ExtentHeap, ExtentHeapError};
+pub(crate) use extent::heap::{ExtentHeap, ExtentHeapError, ExtentInit};
 pub(crate) use extent::{Extent, ExtentArena};
 pub(crate) use id::HeapId;
 pub(crate) use owner::Owner;
@@ -99,27 +99,16 @@ impl Heap {
         Ok(())
     }
 
-    pub(crate) fn allocate_extent(&self, spec: LayoutSpec, pages: &PageMap) -> Option<NonNull<u8>> {
+    pub(crate) fn allocate_extent(
+        &self,
+        spec: LayoutSpec,
+        pages: &PageMap,
+        init: ExtentInit,
+    ) -> Option<NonNull<u8>> {
         let ptr = self
             .extents
             .lock()
-            .allocate(spec, Owner::for_heap(self.id), pages)?;
-        self.retain_allocation();
-        Some(ptr)
-    }
-
-    pub(crate) fn allocate_zeroed_extent(
-        &self,
-        spec: LayoutSpec,
-        requested_size: usize,
-        pages: &PageMap,
-    ) -> Option<NonNull<u8>> {
-        let ptr = self.extents.lock().allocate_zeroed(
-            spec,
-            requested_size,
-            Owner::for_heap(self.id),
-            pages,
-        )?;
+            .allocate(spec, Owner::for_heap(self.id), pages, init)?;
         self.retain_allocation();
         Some(ptr)
     }
@@ -132,10 +121,6 @@ impl Heap {
         self.runs.lock().free(run, ptr)?;
         self.release_allocation();
         Ok(())
-    }
-
-    pub(crate) fn mark_remote_run(run: NonNull<Run>, ptr: NonNull<u8>) -> Result<(), RunHeapError> {
-        RunHeap::mark_remote_pending(run, ptr)
     }
 
     pub(crate) fn complete_remote_run(

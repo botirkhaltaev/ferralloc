@@ -101,7 +101,6 @@ impl RunHeap {
     fn free_block(mut owner: NonNull<Run>, ptr: NonNull<u8>) -> Result<FreedRun, RunHeapError> {
         // SAFETY: PageMap stores only pointers published from this allocator's live RunArena.
         let run = unsafe { owner.as_mut() };
-
         let status = run.free_local(ptr).map_err(RunHeapError::from)?;
 
         Ok(FreedRun {
@@ -117,7 +116,6 @@ impl RunHeap {
     ) -> Result<FreedRun, RunHeapError> {
         // SAFETY: PageMap stores only pointers published from this allocator's live RunArena.
         let run = unsafe { owner.as_mut() };
-
         let status = run.complete_remote_free(ptr).map_err(RunHeapError::from)?;
 
         Ok(FreedRun {

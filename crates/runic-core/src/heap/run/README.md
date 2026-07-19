@@ -4,7 +4,7 @@ Run metadata owns small size-class allocations.
 
 ## Files
 
-- `mod.rs`: `Run`, `RunId`, `RunOwner`, `RunBlock`, and bitmap-backed block state.
+- `mod.rs`: `Run`, `RunId`, `RunBlock`, and bitmap-backed block state.
 - `arena.rs`: out-of-line run metadata storage and reservations.
 - `heap.rs`: small-allocation policy, run creation, available-run lists, and page-map publication.
 

@@ -11,4 +11,5 @@ Scope: `crates/runic-core/src/heap/run/`.
 - Do not use locks on owner-local hot paths unless profiling and invariants justify them.
 - Do not add caches that make a block reachable from two owners at once.
 - Preserve block-boundary validation and double-free detection.
+- Prefer direct free/complete-remote paths over callback-style helpers.
 - Add tests beside the run entity that owns the changed invariant.
