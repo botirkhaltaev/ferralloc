@@ -6,7 +6,7 @@ use core::{
 
 use crate::{
     config::AllocatorConfig,
-    heap::{ExtentHeapError, Heap, HeapId, Run, RunHeapError},
+    heap::{ExtentHeapError, Heap, HeapId, Run, RunHeap, RunHeapError},
     memory::{PageMap, PageOwner},
     size_class::SizeClassId,
     slot_store::{SlotStore, SlotStoreError},
@@ -145,7 +145,7 @@ impl HeapSlot {
         run: NonNull<Run>,
         ptr: NonNull<u8>,
     ) -> Result<(), HeapError> {
-        Heap::mark_remote_run(run, ptr).map_err(HeapError::from)?;
+        RunHeap::mark_remote_pending(run, ptr).map_err(HeapError::from)?;
         self.remote.push(ptr);
         Ok(())
     }

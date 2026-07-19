@@ -9,6 +9,8 @@ Scope: `crates/runic-core/src/`.
 - Keep owner-local, remote, and central/shared responsibilities separated in type APIs.
 - A cache is acceptable only when owned by the entity whose lifecycle makes cached pointers valid.
 - Avoid free helper functions for allocator behavior; put allocation, free, cache, and lifecycle operations on the owning entity.
+- Do not add pass-through methods that only forward to another method; call the owning entity directly.
 - Avoid result-bag or adapter types unless they encode a real allocator invariant.
 - Avoid callback-style helpers for ordinary control flow.
 - Add tests beside the module that owns the invariant being changed.
+- When this subtree's architecture, APIs, or invariants change, revamp the nearest `AGENTS.md` in the same pass; update `README.md` when those docs would otherwise drift.

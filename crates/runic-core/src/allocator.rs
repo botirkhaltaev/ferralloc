@@ -9,8 +9,8 @@ use spin::Mutex;
 use crate::{
     config::AllocatorConfig,
     heap::{
-        Extent, ExtentHeap, ExtentHeapError, Heap, HeapError, HeapHandle, HeapId, HeapTable, Owner,
-        Run, RunHeap, RunHeapError, THREAD_HEAP,
+        Extent, ExtentHeap, ExtentHeapError, ExtentInit, Heap, HeapError, HeapHandle, HeapId,
+        HeapTable, Owner, Run, RunHeap, RunHeapError, THREAD_HEAP,
     },
     layout::LayoutSpec,
     memory::{OsMemory, PageMap, PageOwner},
@@ -180,18 +180,18 @@ impl Allocator {
             return null_mut();
         };
 
-        // Extent path: ExtentHeap owns cache-vs-fresh zeroing and skips the memset
-        // for fresh kernel-zeroed mappings.
+        // Extents: ExtentHeap owns cache-vs-fresh zeroing (skip memset on fresh maps).
         if SizeClasses::id_for(spec).is_none() {
             // SAFETY: core is retained by this Allocator while loaded from self.core.
             let core_ref = unsafe { core.as_ref() };
-            let mut state = core_ref.state().lock();
+            let state = core_ref.state().lock();
             return state
-                .allocate_zeroed_extent(spec, layout.size(), core_ref.pages())
+                .root
+                .allocate_extent(spec, core_ref.pages(), ExtentInit::Zeroed)
                 .map_or(null_mut(), NonNull::as_ptr);
         }
 
-        // Run path: allocate then zero once (run blocks are reused memory).
+        // Runs: blocks are reused memory; allocate then zero once at this boundary.
         // SAFETY: alloc returns a valid pointer for layout or null; we only use it if non-null.
         let ptr = unsafe { self.alloc(layout) };
         if !ptr.is_null() {
@@ -378,18 +378,8 @@ impl AllocatorState {
 
         match class {
             Some(class) => self.root.allocate_remote(class, pages),
-            None => self.root.allocate_extent(spec, pages),
+            None => self.root.allocate_extent(spec, pages, ExtentInit::Uninit),
         }
-    }
-
-    fn allocate_zeroed_extent(
-        &mut self,
-        spec: LayoutSpec,
-        requested_size: usize,
-        pages: &PageMap,
-    ) -> Option<NonNull<u8>> {
-        self.root
-            .allocate_zeroed_extent(spec, requested_size, pages)
     }
 
     fn dealloc(
@@ -767,7 +757,8 @@ mod tests {
         let spec = LayoutSpec::from_layout(layout);
         let handle = state.heaps.acquire().unwrap();
         let ptr = state
-            .allocate_zeroed_extent(spec, layout.size(), &pages)
+            .root
+            .allocate_extent(spec, &pages, ExtentInit::Zeroed)
             .unwrap();
         // SAFETY: ptr was just allocated zeroed for layout and is valid for layout.size() bytes.
         assert!(
@@ -782,34 +773,6 @@ mod tests {
         // SAFETY: PageMap stores only live extent pointers.
         assert_eq!(unsafe { extent.as_ref() }.owner(), Owner::Central);
         assert_eq!(state.dealloc(ptr, Some(handle.id()), &pages), Ok(()));
-    }
-
-    #[test]
-    fn allocator_state_zeroed_extent_reuse_zeroes_cached_mapping() {
-        let mut state = AllocatorState::with_config(AllocatorConfig::new());
-        let pages = PageMap::new();
-        let layout = Layout::from_size_align(128 * 1024, 4096).unwrap();
-        let spec = LayoutSpec::from_layout(layout);
-
-        let first = state
-            .allocate_zeroed_extent(spec, layout.size(), &pages)
-            .unwrap();
-        // SAFETY: first is valid for layout.size() bytes.
-        unsafe { write_bytes(first.as_ptr(), 0xab, layout.size()) };
-        assert_eq!(state.dealloc(first, None, &pages), Ok(()));
-
-        let reused = state
-            .allocate_zeroed_extent(spec, layout.size(), &pages)
-            .unwrap();
-        assert_eq!(reused, first);
-        // SAFETY: reused is valid for layout.size() bytes.
-        assert!(
-            unsafe { core::slice::from_raw_parts(reused.as_ptr(), layout.size()) }
-                .iter()
-                .all(|&byte| byte == 0)
-        );
-
-        assert_eq!(state.dealloc(reused, None, &pages), Ok(()));
     }
 
     #[test]
