@@ -108,6 +108,22 @@ impl Heap {
         Some(ptr)
     }
 
+    pub(crate) fn allocate_zeroed_extent(
+        &self,
+        spec: LayoutSpec,
+        requested_size: usize,
+        pages: &PageMap,
+    ) -> Option<NonNull<u8>> {
+        let ptr = self.extents.lock().allocate_zeroed(
+            spec,
+            requested_size,
+            Owner::for_heap(self.id),
+            pages,
+        )?;
+        self.retain_allocation();
+        Some(ptr)
+    }
+
     pub(crate) fn free_remote(
         &self,
         run: NonNull<Run>,

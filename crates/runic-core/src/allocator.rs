@@ -171,10 +171,27 @@ impl Allocator {
     ///
     /// # Safety
     ///
-    /// The returned pointer is raw memory. The caller must use it only according
-    /// to `layout` and eventually pass it back to this allocator with a
+    /// The returned pointer is raw, zero-initialized memory. The caller must use it
+    /// only according to `layout` and eventually pass it back to this allocator with a
     /// compatible layout.
     pub unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        let spec = LayoutSpec::from_layout(layout);
+        let Some(core) = self.core() else {
+            return null_mut();
+        };
+
+        // Extent path: ExtentHeap owns cache-vs-fresh zeroing and skips the memset
+        // for fresh kernel-zeroed mappings.
+        if SizeClasses::id_for(spec).is_none() {
+            // SAFETY: core is retained by this Allocator while loaded from self.core.
+            let core_ref = unsafe { core.as_ref() };
+            let mut state = core_ref.state().lock();
+            return state
+                .allocate_zeroed_extent(spec, layout.size(), core_ref.pages())
+                .map_or(null_mut(), NonNull::as_ptr);
+        }
+
+        // Run path: allocate then zero once (run blocks are reused memory).
         // SAFETY: alloc returns a valid pointer for layout or null; we only use it if non-null.
         let ptr = unsafe { self.alloc(layout) };
         if !ptr.is_null() {
@@ -363,6 +380,16 @@ impl AllocatorState {
             Some(class) => self.root.allocate_remote(class, pages),
             None => self.root.allocate_extent(spec, pages),
         }
+    }
+
+    fn allocate_zeroed_extent(
+        &mut self,
+        spec: LayoutSpec,
+        requested_size: usize,
+        pages: &PageMap,
+    ) -> Option<NonNull<u8>> {
+        self.root
+            .allocate_zeroed_extent(spec, requested_size, pages)
     }
 
     fn dealloc(
@@ -740,10 +767,14 @@ mod tests {
         let spec = LayoutSpec::from_layout(layout);
         let handle = state.heaps.acquire().unwrap();
         let ptr = state
-            .allocate(Some(handle.id()), SizeClasses::id_for(spec), spec, &pages)
+            .allocate_zeroed_extent(spec, layout.size(), &pages)
             .unwrap();
-        // SAFETY: ptr was just allocated for layout and is valid for layout.size() bytes.
-        unsafe { write_bytes(ptr.as_ptr(), 0, layout.size()) };
+        // SAFETY: ptr was just allocated zeroed for layout and is valid for layout.size() bytes.
+        assert!(
+            unsafe { core::slice::from_raw_parts(ptr.as_ptr(), layout.size()) }
+                .iter()
+                .all(|&byte| byte == 0)
+        );
         let PageOwner::Extent(extent) = pages.get(ptr).unwrap() else {
             panic!("large zeroed allocation should publish a central extent");
         };
@@ -751,6 +782,34 @@ mod tests {
         // SAFETY: PageMap stores only live extent pointers.
         assert_eq!(unsafe { extent.as_ref() }.owner(), Owner::Central);
         assert_eq!(state.dealloc(ptr, Some(handle.id()), &pages), Ok(()));
+    }
+
+    #[test]
+    fn allocator_state_zeroed_extent_reuse_zeroes_cached_mapping() {
+        let mut state = AllocatorState::with_config(AllocatorConfig::new());
+        let pages = PageMap::new();
+        let layout = Layout::from_size_align(128 * 1024, 4096).unwrap();
+        let spec = LayoutSpec::from_layout(layout);
+
+        let first = state
+            .allocate_zeroed_extent(spec, layout.size(), &pages)
+            .unwrap();
+        // SAFETY: first is valid for layout.size() bytes.
+        unsafe { write_bytes(first.as_ptr(), 0xab, layout.size()) };
+        assert_eq!(state.dealloc(first, None, &pages), Ok(()));
+
+        let reused = state
+            .allocate_zeroed_extent(spec, layout.size(), &pages)
+            .unwrap();
+        assert_eq!(reused, first);
+        // SAFETY: reused is valid for layout.size() bytes.
+        assert!(
+            unsafe { core::slice::from_raw_parts(reused.as_ptr(), layout.size()) }
+                .iter()
+                .all(|&byte| byte == 0)
+        );
+
+        assert_eq!(state.dealloc(reused, None, &pages), Ok(()));
     }
 
     #[test]
