@@ -134,7 +134,7 @@ impl ThreadHeap {
         let run = self.cached_run(class)?;
 
         // SAFETY: slot is installed only while this TLS heap retains the allocator core.
-        let allocation = unsafe { slot.as_ref() }.allocate_cached_run(run);
+        let allocation = unsafe { slot.as_ref() }.heap().allocate_local(run);
         if allocation.is_none() {
             self.clear_run(class);
         }
@@ -149,11 +149,17 @@ impl ThreadHeap {
 
         if self.cached_run(class) == Some(run) {
             // SAFETY: slot is installed only while this TLS heap retains the allocator core.
-            return unsafe { slot.as_ref() }.free_cached_run(run, ptr);
+            return unsafe { slot.as_ref() }
+                .heap()
+                .free_local(run, ptr)
+                .map_err(HeapError::from);
         }
 
         // SAFETY: slot is installed only while this TLS heap retains the allocator core.
-        unsafe { slot.as_ref() }.free_run(run, ptr)
+        unsafe { slot.as_ref() }
+            .heap()
+            .free_remote(run, ptr)
+            .map_err(HeapError::from)
     }
 
     fn cached_run(&self, class: SizeClassId) -> Option<NonNull<Run>> {
@@ -192,7 +198,7 @@ impl ThreadHeap {
             };
 
             // SAFETY: slot is installed only while this TLS heap retains the allocator core.
-            let _ = unsafe { slot.as_ref() }.return_run(run);
+            let _ = unsafe { slot.as_ref() }.heap().return_run(run);
         }
     }
 

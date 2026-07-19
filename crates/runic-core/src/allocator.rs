@@ -353,7 +353,6 @@ impl AllocatorState {
 
     pub(crate) fn abandon(&mut self, heap: HeapId, pages: &PageMap) -> Result<(), AllocatorError> {
         self.heaps.abandon(heap, pages)?;
-        self.heaps.reclaim(heap, pages)?;
         Ok(())
     }
 
@@ -372,7 +371,7 @@ impl AllocatorState {
             && let Some(class) = class
             && let Some(heap) = self.heaps.active_heap(heap_id)
         {
-            let allocation = heap.allocate_run(class, pages);
+            let allocation = heap.allocate_remote(class, pages);
 
             if allocation.is_some() {
                 return allocation;
@@ -380,7 +379,7 @@ impl AllocatorState {
         }
 
         match class {
-            Some(class) => self.root.allocate_run(class, pages),
+            Some(class) => self.root.allocate_remote(class, pages),
             None => self.root.allocate_extent(spec, pages),
         }
     }
@@ -420,24 +419,23 @@ impl AllocatorState {
         Ok(())
     }
 
-    fn dealloc_run(
+fn dealloc_run(
         &mut self,
         run: NonNull<Run>,
         ptr: NonNull<u8>,
         current_heap: Option<HeapId>,
-        pages: &PageMap,
+        _pages: &PageMap,
     ) -> Result<(), AllocatorError> {
         // SAFETY: PageMap stores only pointers published from this allocator's live RunArena.
         let owner = unsafe { run.as_ref() }.owner();
         match owner {
-            RunOwner::Central => self.root.free_run(run, ptr)?,
+            RunOwner::Central => self.root.free_remote(run, ptr)?,
             RunOwner::Thread(heap_id) => {
-                let heap = self.heaps.heap_ref(heap_id)?;
+                let heap = self.heaps.handle(heap_id).ok_or(AllocatorError::InvalidMetadata)?;
                 if Some(heap_id) == current_heap || heap.is_abandoned() {
-                    heap.free_run(run, ptr)?;
-                    self.heaps.reclaim(heap_id, pages)?;
+                    heap.free_remote(run, ptr)?;
                 } else {
-                    heap.free_remote_run(run, ptr)?;
+                    heap.enqueue_remote_run(run, ptr)?;
                 }
             }
         }
@@ -546,7 +544,7 @@ impl AllocatorState {
             Some(class) => {
                 if let Some(heap_id) = current_heap
                     && let Some(heap) = self.heaps.active_heap(heap_id)
-                    && let Some(ptr) = heap.allocate_run(class, pages)
+                    && let Some(ptr) = heap.allocate_remote(class, pages)
                 {
                     // SAFETY: ptr was just allocated for this layout and is valid for requested_size bytes.
                     unsafe { write_bytes(ptr.as_ptr(), 0, requested_size) };
@@ -554,7 +552,7 @@ impl AllocatorState {
                 }
 
                 self.root
-                    .allocate_run(class, pages)
+                    .allocate_remote(class, pages)
                     .map_or(null_mut(), |ptr| {
                         // SAFETY: ptr was just allocated for this layout and is valid for requested_size bytes.
                         unsafe { write_bytes(ptr.as_ptr(), 0, requested_size) };
@@ -751,7 +749,7 @@ mod tests {
             .heaps
             .active_heap(handle.id())
             .unwrap()
-            .allocate_run(class, &pages)
+            .allocate_remote(class, &pages)
             .unwrap();
 
         assert_eq!(state.abandon(handle.id(), &pages), Ok(()));

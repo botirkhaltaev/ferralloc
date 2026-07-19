@@ -47,7 +47,7 @@ impl Heap {
         }
     }
 
-    pub(crate) fn allocate_run(&self, class: SizeClassId, pages: &PageMap) -> Option<NonNull<u8>> {
+    pub(crate) fn allocate_remote(&self, class: SizeClassId, pages: &PageMap) -> Option<NonNull<u8>> {
         let mut runs = self.runs.lock();
         let mut run = runs.allocate(class, self.id, pages)?;
         // SAFETY: RunHeap returns pointers to live runs from this heap's arena.
@@ -60,7 +60,7 @@ impl Heap {
         Some(ptr)
     }
 
-    pub(crate) fn take_available_run(&self, class: SizeClassId) -> Option<NonNull<Run>> {
+    pub(crate) fn take_run(&self, class: SizeClassId) -> Option<NonNull<Run>> {
         self.runs.lock().take_available(class)
     }
 
@@ -68,7 +68,7 @@ impl Heap {
         self.runs.lock().return_available(run)
     }
 
-    pub(crate) fn allocate_cached_run(&self, mut run: NonNull<Run>) -> Option<NonNull<u8>> {
+    pub(crate) fn allocate_local(&self, mut run: NonNull<Run>) -> Option<NonNull<u8>> {
         // SAFETY: cached run pointers are published from this heap's live RunArena and retained by
         // the owning TLS heap entry while the heap slot remains installed.
         let ptr = unsafe { run.as_mut() }.allocate()?;
@@ -76,11 +76,7 @@ impl Heap {
         Some(ptr)
     }
 
-    pub(crate) fn free_cached_run(
-        &self,
-        run: NonNull<Run>,
-        ptr: NonNull<u8>,
-    ) -> Result<(), RunHeapError> {
+    pub(crate) fn free_local(&self, run: NonNull<Run>, ptr: NonNull<u8>) -> Result<(), RunHeapError> {
         // SAFETY: cached run pointers are published from this heap's live RunArena and retained by
         // the owning TLS heap entry while the heap slot remains installed.
         unsafe { run.as_ref() }
@@ -110,7 +106,7 @@ impl Heap {
         Some(ptr)
     }
 
-    pub(crate) fn free_run(&self, run: NonNull<Run>, ptr: NonNull<u8>) -> Result<(), RunHeapError> {
+    pub(crate) fn free_remote(&self, run: NonNull<Run>, ptr: NonNull<u8>) -> Result<(), RunHeapError> {
         self.runs.lock().free(run, ptr)?;
         self.release_allocation();
         Ok(())

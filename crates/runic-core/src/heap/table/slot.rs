@@ -77,21 +77,15 @@ impl HeapTable {
         (!slot.is_abandoned()).then_some(&slot.heap)
     }
 
-    pub(crate) fn heap_ref(&self, id: HeapId) -> Result<HeapRef, HeapError> {
-        let slot = self.slot(id).ok_or(HeapError::InvalidHeap)?;
-        Ok(HeapRef::new(NonNull::from(slot)))
+    pub(crate) fn handle(&self, id: HeapId) -> Option<HeapHandle> {
+        let slot = self.slot(id)?;
+        Some(HeapHandle::new(id, NonNull::from(slot)))
     }
 
     pub(crate) fn abandon(&mut self, id: HeapId, pages: &PageMap) -> Result<(), HeapError> {
         let slot = self.slot_mut(id).ok_or(HeapError::InvalidHeap)?;
         slot.drain(pages)?;
         slot.abandon();
-        Ok(())
-    }
-
-    pub(crate) fn reclaim(&mut self, id: HeapId, _pages: &PageMap) -> Result<(), HeapError> {
-        let _slot = self.slot_mut(id).ok_or(HeapError::InvalidHeap)?;
-
         Ok(())
     }
 
@@ -137,32 +131,16 @@ impl HeapSlot {
         HeapHandle::new(id, NonNull::from(self))
     }
 
+    pub(super) fn heap(&self) -> &Heap {
+        &self.heap
+    }
+
     pub(super) fn take_run(&self, class: SizeClassId, pages: &PageMap) -> Option<NonNull<Run>> {
         self.drain(pages).ok()?;
-        self.heap.take_available_run(class)
+        self.heap.take_run(class)
     }
 
-    pub(super) fn allocate_cached_run(&self, run: NonNull<Run>) -> Option<NonNull<u8>> {
-        self.heap.allocate_cached_run(run)
-    }
-
-    pub(super) fn return_run(&self, run: NonNull<Run>) -> Result<(), HeapError> {
-        self.heap.return_run(run).map_err(HeapError::from)
-    }
-
-    pub(super) fn free_run(&self, run: NonNull<Run>, ptr: NonNull<u8>) -> Result<(), HeapError> {
-        self.heap.free_run(run, ptr).map_err(HeapError::from)
-    }
-
-    pub(super) fn free_cached_run(
-        &self,
-        run: NonNull<Run>,
-        ptr: NonNull<u8>,
-    ) -> Result<(), HeapError> {
-        self.heap.free_cached_run(run, ptr).map_err(HeapError::from)
-    }
-
-    fn free_remote_run(&self, run: NonNull<Run>, ptr: NonNull<u8>) -> Result<(), HeapError> {
+    pub(super) fn enqueue_remote_run(&self, run: NonNull<Run>, ptr: NonNull<u8>) -> Result<(), HeapError> {
         Heap::mark_remote_run(run, ptr).map_err(HeapError::from)?;
         self.remote.push(ptr);
         Ok(())
@@ -199,36 +177,6 @@ impl HeapSlot {
 
     fn has_live_allocations(&self) -> bool {
         self.heap.has_live_allocations()
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct HeapRef {
-    slot: NonNull<HeapSlot>,
-}
-
-impl HeapRef {
-    fn new(slot: NonNull<HeapSlot>) -> Self {
-        Self { slot }
-    }
-
-    pub(crate) fn free_run(self, run: NonNull<Run>, ptr: NonNull<u8>) -> Result<(), HeapError> {
-        // SAFETY: HeapRef is constructed only from a validated live HeapTable slot.
-        unsafe { self.slot.as_ref() }.free_run(run, ptr)
-    }
-
-    pub(crate) fn free_remote_run(
-        self,
-        run: NonNull<Run>,
-        ptr: NonNull<u8>,
-    ) -> Result<(), HeapError> {
-        // SAFETY: HeapRef is constructed only from a validated live HeapTable slot.
-        unsafe { self.slot.as_ref() }.free_remote_run(run, ptr)
-    }
-
-    pub(crate) fn is_abandoned(self) -> bool {
-        // SAFETY: HeapRef is constructed only from a validated live HeapTable slot.
-        unsafe { self.slot.as_ref() }.is_abandoned()
     }
 }
 
@@ -284,5 +232,23 @@ impl HeapHandle {
 
     pub(super) const fn slot_ptr(self) -> NonNull<HeapSlot> {
         self.slot
+    }
+
+    pub(crate) fn free_remote(self, run: NonNull<Run>, ptr: NonNull<u8>) -> Result<(), HeapError> {
+        // SAFETY: HeapHandle is constructed only from a validated live HeapTable slot.
+        unsafe { self.slot.as_ref() }
+            .heap()
+            .free_remote(run, ptr)
+            .map_err(HeapError::from)
+    }
+
+    pub(crate) fn enqueue_remote_run(self, run: NonNull<Run>, ptr: NonNull<u8>) -> Result<(), HeapError> {
+        // SAFETY: HeapHandle is constructed only from a validated live HeapTable slot.
+        unsafe { self.slot.as_ref() }.enqueue_remote_run(run, ptr)
+    }
+
+    pub(crate) fn is_abandoned(self) -> bool {
+        // SAFETY: HeapHandle is constructed only from a validated live HeapTable slot.
+        unsafe { self.slot.as_ref() }.is_abandoned()
     }
 }
