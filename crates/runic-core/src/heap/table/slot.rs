@@ -140,7 +140,11 @@ impl HeapSlot {
         self.heap.take_run(class)
     }
 
-    pub(super) fn enqueue_remote_run(&self, run: NonNull<Run>, ptr: NonNull<u8>) -> Result<(), HeapError> {
+    pub(super) fn enqueue_remote_run(
+        &self,
+        run: NonNull<Run>,
+        ptr: NonNull<u8>,
+    ) -> Result<(), HeapError> {
         Heap::mark_remote_run(run, ptr).map_err(HeapError::from)?;
         self.remote.push(ptr);
         Ok(())
@@ -242,7 +246,11 @@ impl HeapHandle {
             .map_err(HeapError::from)
     }
 
-    pub(crate) fn enqueue_remote_run(self, run: NonNull<Run>, ptr: NonNull<u8>) -> Result<(), HeapError> {
+    pub(crate) fn enqueue_remote_run(
+        self,
+        run: NonNull<Run>,
+        ptr: NonNull<u8>,
+    ) -> Result<(), HeapError> {
         // SAFETY: HeapHandle is constructed only from a validated live HeapTable slot.
         unsafe { self.slot.as_ref() }.enqueue_remote_run(run, ptr)
     }

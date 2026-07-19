@@ -1,8 +1,7 @@
 use core::{num::NonZeroU32, ptr::NonNull};
 
-mod arena;
 mod cache;
-mod heap;
+pub(crate) mod heap;
 
 use crate::{
     heap::HeapId,
@@ -10,8 +9,10 @@ use crate::{
     memory::{AddressRange, Mapping},
 };
 
-pub(crate) use arena::{ExtentArena, ExtentReservation};
-pub(crate) use heap::{ExtentHeap, ExtentHeapError};
+use super::arena::{Arena, ArenaId, ArenaValue};
+
+pub(crate) type ExtentArena = Arena<Extent, ExtentId>;
+pub(crate) type ExtentReservation = super::arena::ArenaReservation<ExtentId>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ExtentId {
@@ -28,6 +29,16 @@ impl ExtentId {
     }
 }
 
+impl ArenaId for ExtentId {
+    fn index(self) -> u32 {
+        self.index()
+    }
+
+    fn from_index(index: u32) -> Option<Self> {
+        ExtentId::from_index(index)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ExtentError {
     InvalidPointer,
@@ -38,6 +49,12 @@ pub(crate) struct Extent {
     owner: HeapId,
     mapping: Mapping,
     range: AddressRange,
+}
+
+impl ArenaValue<ExtentId> for Extent {
+    fn id(&self) -> ExtentId {
+        self.id
+    }
 }
 
 impl Extent {
@@ -106,10 +123,6 @@ impl Extent {
         self.mapping.range()
     }
 
-    pub(crate) fn into_mapping(self) -> Mapping {
-        self.mapping
-    }
-
     pub(crate) fn free(&self, ptr: NonNull<u8>) -> Result<(), ExtentError> {
         self.validate_free(ptr)
     }
@@ -120,6 +133,10 @@ impl Extent {
         } else {
             Err(ExtentError::InvalidPointer)
         }
+    }
+
+    pub(crate) fn into_mapping(self) -> Mapping {
+        self.mapping
     }
 }
 

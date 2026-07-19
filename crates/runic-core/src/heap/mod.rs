@@ -6,14 +6,17 @@ use crate::{
     config::AllocatorConfig, layout::LayoutSpec, memory::PageMap, size_class::SizeClassId,
 };
 
+pub(crate) mod arena;
 pub(crate) mod extent;
 pub(crate) mod id;
 pub(crate) mod run;
 pub(crate) mod table;
 
-pub(crate) use extent::{Extent, ExtentArena, ExtentHeap, ExtentHeapError, ExtentId};
+pub(crate) use extent::heap::{ExtentHeap, ExtentHeapError};
+pub(crate) use extent::{Extent, ExtentArena};
 pub(crate) use id::HeapId;
-pub(crate) use run::{RUN_SIZE, Run, RunArena, RunError, RunHeap, RunHeapError, RunId, RunOwner};
+pub(crate) use run::arena::RunArena;
+pub(crate) use run::{RUN_SIZE, Run, RunError, RunHeap, RunHeapError, RunId, RunOwner};
 pub(crate) use table::{HeapError, HeapHandle, HeapTable, THREAD_HEAP};
 
 pub(crate) struct Heap {
@@ -47,7 +50,11 @@ impl Heap {
         }
     }
 
-    pub(crate) fn allocate_remote(&self, class: SizeClassId, pages: &PageMap) -> Option<NonNull<u8>> {
+    pub(crate) fn allocate_remote(
+        &self,
+        class: SizeClassId,
+        pages: &PageMap,
+    ) -> Option<NonNull<u8>> {
         let mut runs = self.runs.lock();
         let mut run = runs.allocate(class, self.id, pages)?;
         // SAFETY: RunHeap returns pointers to live runs from this heap's arena.
@@ -76,7 +83,11 @@ impl Heap {
         Some(ptr)
     }
 
-    pub(crate) fn free_local(&self, run: NonNull<Run>, ptr: NonNull<u8>) -> Result<(), RunHeapError> {
+    pub(crate) fn free_local(
+        &self,
+        run: NonNull<Run>,
+        ptr: NonNull<u8>,
+    ) -> Result<(), RunHeapError> {
         // SAFETY: cached run pointers are published from this heap's live RunArena and retained by
         // the owning TLS heap entry while the heap slot remains installed.
         unsafe { run.as_ref() }
@@ -106,7 +117,11 @@ impl Heap {
         Some(ptr)
     }
 
-    pub(crate) fn free_remote(&self, run: NonNull<Run>, ptr: NonNull<u8>) -> Result<(), RunHeapError> {
+    pub(crate) fn free_remote(
+        &self,
+        run: NonNull<Run>,
+        ptr: NonNull<u8>,
+    ) -> Result<(), RunHeapError> {
         self.runs.lock().free(run, ptr)?;
         self.release_allocation();
         Ok(())

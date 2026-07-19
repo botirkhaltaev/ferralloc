@@ -419,7 +419,7 @@ impl AllocatorState {
         Ok(())
     }
 
-fn dealloc_run(
+    fn dealloc_run(
         &mut self,
         run: NonNull<Run>,
         ptr: NonNull<u8>,
@@ -431,7 +431,10 @@ fn dealloc_run(
         match owner {
             RunOwner::Central => self.root.free_remote(run, ptr)?,
             RunOwner::Thread(heap_id) => {
-                let heap = self.heaps.handle(heap_id).ok_or(AllocatorError::InvalidMetadata)?;
+                let heap = self
+                    .heaps
+                    .handle(heap_id)
+                    .ok_or(AllocatorError::InvalidMetadata)?;
                 if Some(heap_id) == current_heap || heap.is_abandoned() {
                     heap.free_remote(run, ptr)?;
                 } else {

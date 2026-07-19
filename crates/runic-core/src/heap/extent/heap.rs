@@ -72,7 +72,7 @@ impl ExtentHeap {
         pages: &PageMap,
     ) -> Option<NonNull<u8>> {
         let reservation = self.extents.reserve()?;
-        let id = reservation.id();
+        let id = reservation.id;
         let Some(extent) = Extent::new(id, owner, mapping, spec) else {
             self.extents.release(reservation);
             return None;
@@ -137,7 +137,7 @@ impl ExtentHeap {
         extent: Extent,
         pages: &PageMap,
     ) -> Option<NonNull<Extent>> {
-        let id = reservation.id();
+        let id = reservation.id;
         let range = extent.mapping_range();
 
         if self.extents.insert(reservation, extent).is_err() {
@@ -162,7 +162,7 @@ impl ExtentHeap {
 #[cfg(test)]
 mod tests {
     use crate::{
-        heap::{Extent, ExtentId},
+        heap::{Extent, extent::ExtentId},
         layout::LayoutSpec,
         memory::{OsMemory, PageMap, PageOwner},
     };
@@ -182,7 +182,7 @@ mod tests {
         let mut allocator = ExtentHeap::new(4, ExtentConfig::new());
         let pages = PageMap::new();
         let reservation = allocator.extents.reserve().unwrap();
-        let id = reservation.id();
+        let id = reservation.id;
         let extent = reusable_extent(id);
         let range = extent.mapping_range();
         let existing = NonNull::dangling();

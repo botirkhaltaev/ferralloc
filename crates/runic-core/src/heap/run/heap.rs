@@ -1,13 +1,13 @@
 use core::ptr::NonNull;
 
 use crate::{
-    heap::{HeapId, RUN_SIZE, Run, RunArena, RunError, RunOwner},
+    heap::{HeapId, RUN_SIZE, Run, RunArena, RunError, RunId, RunOwner},
     layout::LayoutSpec,
     memory::{OsMemory, PageMap},
     size_class::{SizeClassId, SizeClasses},
 };
 
-use super::RunReservation;
+use super::super::arena::ArenaReservation;
 
 pub(crate) struct RunHeap {
     runs: RunArena,
@@ -65,7 +65,7 @@ impl RunHeap {
         let class = SizeClasses::class(class)?;
         let mapping = OsMemory::map(RUN_SIZE)?;
         let reservation = self.runs.reserve()?;
-        let id = reservation.id();
+        let id = reservation.id;
 
         let run = Run::new(id, RunOwner::for_heap(owner), mapping, class);
         self.insert_run(reservation, run, pages)
@@ -198,11 +198,11 @@ impl RunHeap {
 
     fn insert_run(
         &mut self,
-        reservation: RunReservation,
+        reservation: ArenaReservation<RunId>,
         run: Run,
         pages: &PageMap,
     ) -> Option<NonNull<Run>> {
-        let id = reservation.id();
+        let id = reservation.id;
         let range = run.range();
 
         if self.runs.insert(reservation, run).is_err() {
@@ -309,7 +309,7 @@ mod tests {
         let mut allocator = RunHeap::new(4);
         let pages = PageMap::new();
         let reservation = allocator.runs.reserve().unwrap();
-        let id = reservation.id();
+        let id = reservation.id;
         let run = reusable_run(id);
         let range = run.range();
         let existing = NonNull::dangling();

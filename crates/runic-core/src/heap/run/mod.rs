@@ -2,8 +2,8 @@ use core::{cell::UnsafeCell, mem::size_of, num::NonZeroU32, ptr::NonNull};
 
 use core::sync::atomic::{AtomicU8, Ordering};
 
-mod arena;
-mod heap;
+pub(crate) mod arena;
+pub(crate) mod heap;
 
 use crate::{
     heap::HeapId,
@@ -12,7 +12,8 @@ use crate::{
     size_class::{SizeClass, SizeClassId},
 };
 
-pub(crate) use arena::{RunArena, RunReservation};
+use super::arena::ArenaValue;
+
 pub(crate) use heap::{RunHeap, RunHeapError};
 
 pub(crate) const RUN_SIZE: usize = 64 * 1024;
@@ -47,6 +48,16 @@ impl RunId {
 
     pub(crate) const fn index(self) -> u32 {
         self.index.get() - 1
+    }
+}
+
+impl crate::heap::arena::ArenaId for RunId {
+    fn index(self) -> u32 {
+        self.index()
+    }
+
+    fn from_index(index: u32) -> Option<Self> {
+        Self::from_index(index)
     }
 }
 
@@ -229,6 +240,12 @@ pub(crate) struct Run {
     blocks: BlockStates,
 }
 
+impl ArenaValue<RunId> for Run {
+    fn id(&self) -> RunId {
+        self.id
+    }
+}
+
 // SAFETY: owner-local methods are called only by the owning heap. Remote methods only touch atomic
 // block state and never mutate RunState.
 unsafe impl Sync for Run {}
@@ -273,6 +290,7 @@ impl Run {
         }
     }
 
+    #[cfg(test)]
     pub(crate) const fn id(&self) -> RunId {
         self.id
     }
