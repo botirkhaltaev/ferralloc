@@ -44,6 +44,8 @@ impl From<SlotStoreError> for ExtentArenaError {
 
 #[cfg(test)]
 mod tests {
+    use core::num::NonZeroU32;
+
     use crate::{
         heap::{Extent, ExtentId, HeapId},
         layout::LayoutSpec,
@@ -57,7 +59,7 @@ mod tests {
         let len = spec.mapping_len(OsMemory::page_size()).unwrap();
         let mapping = OsMemory::map(len).unwrap();
 
-        Extent::new(id, HeapId::ROOT, mapping, spec).unwrap()
+        Extent::new(id, HeapId::new(0, NonZeroU32::MIN).unwrap(), mapping, spec).unwrap()
     }
 
     fn arena_with_capacity(capacity: usize) -> ExtentArena {
