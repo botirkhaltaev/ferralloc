@@ -1,7 +1,7 @@
 use core::ptr::NonNull;
 
 use crate::{
-    heap::{Owner, RUN_SIZE, Run, RunArena, RunError, RunId},
+    heap::{HeapId, RUN_SIZE, Run, RunArena, RunError, RunId},
     layout::LayoutSpec,
     memory::{OsMemory, PageMap},
     size_class::{SizeClassId, SizeClasses},
@@ -44,14 +44,18 @@ impl RunHeap {
     pub(crate) fn allocate(
         &mut self,
         class: SizeClassId,
-        owner: Owner,
+        owner: HeapId,
         pages: &PageMap,
     ) -> Option<NonNull<Run>> {
-        self.take_available(class)
+        self.take_available(class, owner)
             .or_else(|| self.allocate_run(class, owner, pages))
     }
 
-    pub(crate) fn take_available(&mut self, class: SizeClassId) -> Option<NonNull<Run>> {
+    pub(crate) fn take_available(
+        &mut self,
+        class: SizeClassId,
+        _heap: HeapId,
+    ) -> Option<NonNull<Run>> {
         self.take_available_from(class.index())
     }
 
@@ -59,7 +63,7 @@ impl RunHeap {
     pub(crate) fn allocate_run(
         &mut self,
         class: SizeClassId,
-        owner: Owner,
+        owner: HeapId,
         pages: &PageMap,
     ) -> Option<NonNull<Run>> {
         let class = SizeClasses::class(class)?;
@@ -80,13 +84,22 @@ impl RunHeap {
         self.finish_free(freed)
     }
 
-    pub(crate) fn mark_remote_pending(
-        owner: NonNull<Run>,
-        ptr: NonNull<u8>,
-    ) -> Result<(), RunHeapError> {
+    pub(crate) fn claim_free(owner: NonNull<Run>, ptr: NonNull<u8>) -> Result<(), RunHeapError> {
         // SAFETY: PageMap stores only pointers published from this allocator's live RunArena.
         let run = unsafe { owner.as_ref() };
-        run.mark_remote_pending(ptr).map_err(RunHeapError::from)
+        run.claim_free(ptr).map_err(RunHeapError::from)
+    }
+
+    pub(crate) fn rebind_available(&mut self, heap_id: HeapId) {
+        for head in &mut self.available {
+            let mut current = *head;
+            while let Some(mut run_ptr) = current {
+                // SAFETY: available-list pointers are created only from live RunArena entries.
+                unsafe { run_ptr.as_mut() }.set_heap_id(heap_id);
+                // SAFETY: available-list pointers are created only from live RunArena entries.
+                current = unsafe { run_ptr.as_ref() }.available_next();
+            }
+        }
     }
 
     pub(crate) fn complete_remote_free(
@@ -247,8 +260,9 @@ mod tests {
         let mapping = OsMemory::map(RUN_SIZE).unwrap();
         let spec = LayoutSpec::from_size_align(64, 8).unwrap();
         let class = SizeClasses::for_layout(spec).unwrap();
+        let heap = HeapId::new(0, core::num::NonZeroU32::MIN).unwrap();
 
-        Run::new(id, Owner::Central, mapping, class)
+        Run::new(id, heap, mapping, class)
     }
 
     fn available_run_id(allocator: &RunHeap, class_index: usize) -> Option<RunId> {
@@ -263,7 +277,8 @@ mod tests {
         class: SizeClassId,
         pages: &PageMap,
     ) -> Option<(NonNull<Run>, NonNull<u8>)> {
-        let mut run = allocator.allocate(class, Owner::for_heap(HeapId::ROOT), pages)?;
+        let heap = HeapId::new(0, core::num::NonZeroU32::MIN).unwrap();
+        let mut run = allocator.allocate(class, heap, pages)?;
         // SAFETY: RunHeap returns pointers to live runs from its arena.
         let ptr = unsafe { run.as_mut() }.allocate()?;
         // SAFETY: RunHeap returns pointers to live runs from its arena.

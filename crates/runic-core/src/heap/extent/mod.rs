@@ -1,4 +1,8 @@
-use core::{num::NonZeroU32, ptr::NonNull};
+use core::{
+    num::NonZeroU32,
+    ptr::NonNull,
+    sync::atomic::{AtomicU8, Ordering},
+};
 
 mod cache;
 pub(crate) mod heap;
@@ -8,8 +12,8 @@ use crate::{
     memory::{AddressRange, Mapping},
 };
 
+use super::HeapId;
 use super::arena::{Arena, ArenaId, ArenaValue};
-use super::owner::Owner;
 
 pub(crate) type ExtentArena = Arena<Extent, ExtentId>;
 pub(crate) type ExtentReservation = super::arena::ArenaReservation<ExtentId>;
@@ -42,13 +46,42 @@ impl ArenaId for ExtentId {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ExtentError {
     InvalidPointer,
+    DoubleFree,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExtentState {
+    Free = 0,
+    Allocated = 1,
+    RemotePending = 2,
+}
+
+impl ExtentState {
+    const fn raw(self) -> u8 {
+        match self {
+            Self::Free => 0,
+            Self::Allocated => 1,
+            Self::RemotePending => 2,
+        }
+    }
+
+    const fn from_raw(raw: u8) -> Option<Self> {
+        match raw {
+            value if value == Self::Free.raw() => Some(Self::Free),
+            value if value == Self::Allocated.raw() => Some(Self::Allocated),
+            value if value == Self::RemotePending.raw() => Some(Self::RemotePending),
+            _ => None,
+        }
+    }
 }
 
 pub(crate) struct Extent {
     id: ExtentId,
-    owner: Owner,
+    heap: HeapId,
     mapping: Mapping,
     range: AddressRange,
+    state: AtomicU8,
 }
 
 impl ArenaValue<ExtentId> for Extent {
@@ -60,7 +93,7 @@ impl ArenaValue<ExtentId> for Extent {
 impl Extent {
     pub(crate) fn new(
         id: ExtentId,
-        owner: Owner,
+        heap: HeapId,
         mapping: Mapping,
         spec: LayoutSpec,
     ) -> Option<Self> {
@@ -71,9 +104,10 @@ impl Extent {
         if mapping.range().contains(range) {
             Some(Self {
                 id,
-                owner,
+                heap,
                 mapping,
                 range,
+                state: AtomicU8::new(ExtentState::Allocated.raw()),
             })
         } else {
             None
@@ -84,8 +118,8 @@ impl Extent {
         self.id
     }
 
-    pub(crate) const fn owner(&self) -> Owner {
-        self.owner
+    pub(crate) const fn heap_id(&self) -> HeapId {
+        self.heap
     }
 
     pub(crate) const fn ptr(&self) -> NonNull<u8> {
@@ -124,7 +158,53 @@ impl Extent {
     }
 
     pub(crate) fn free(&self, ptr: NonNull<u8>) -> Result<(), ExtentError> {
-        self.validate_free(ptr)
+        match self.state.compare_exchange(
+            ExtentState::Allocated.raw(),
+            ExtentState::Free.raw(),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => self.validate_free(ptr),
+            Err(value) if value == ExtentState::RemotePending.raw() => Err(ExtentError::DoubleFree),
+            Err(value) if value == ExtentState::Free.raw() => Err(ExtentError::DoubleFree),
+            Err(_) => Err(ExtentError::InvalidPointer),
+        }
+    }
+
+    pub(crate) fn claim_free(&self) -> Result<(), ExtentError> {
+        match self.state.compare_exchange(
+            ExtentState::Allocated.raw(),
+            ExtentState::RemotePending.raw(),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => Ok(()),
+            Err(value) if value == ExtentState::RemotePending.raw() => Err(ExtentError::DoubleFree),
+            Err(value) if value == ExtentState::Free.raw() => Err(ExtentError::DoubleFree),
+            Err(_) => Err(ExtentError::InvalidPointer),
+        }
+    }
+
+    pub(crate) fn unclaim(&self) -> Result<(), ExtentError> {
+        match self.state.compare_exchange(
+            ExtentState::RemotePending.raw(),
+            ExtentState::Allocated.raw(),
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => Ok(()),
+            Err(value) if value == ExtentState::RemotePending.raw() => Err(ExtentError::DoubleFree),
+            Err(value) if value == ExtentState::Free.raw() => Err(ExtentError::DoubleFree),
+            Err(_) => Err(ExtentError::InvalidPointer),
+        }
+    }
+
+    pub(crate) fn validate_remote_pending(&self) -> Result<(), ExtentError> {
+        if self.load_state()? == ExtentState::RemotePending {
+            Ok(())
+        } else {
+            Err(ExtentError::DoubleFree)
+        }
     }
 
     pub(crate) fn validate_free(&self, ptr: NonNull<u8>) -> Result<(), ExtentError> {
@@ -138,13 +218,23 @@ impl Extent {
     pub(crate) fn into_mapping(self) -> Mapping {
         self.mapping
     }
+
+    fn load_state(&self) -> Result<ExtentState, ExtentError> {
+        ExtentState::from_raw(self.state.load(Ordering::Relaxed)).ok_or(ExtentError::InvalidPointer)
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{heap::HeapId, layout::LayoutSpec, memory::OsMemory};
+    use core::num::NonZeroU32;
+
+    use crate::{layout::LayoutSpec, memory::OsMemory};
 
     use super::*;
+
+    fn test_heap_id() -> HeapId {
+        HeapId::new(0, NonZeroU32::MIN).unwrap()
+    }
 
     #[test]
     fn extent_aligns_user_pointer_inside_mapping() {
@@ -153,7 +243,7 @@ mod tests {
         let mapping_range = mapping.range();
         let extent = Extent::new(
             ExtentId::from_index(0).unwrap(),
-            Owner::for_heap(HeapId::ROOT),
+            test_heap_id(),
             mapping,
             spec,
         )
@@ -170,7 +260,7 @@ mod tests {
         let mapping = OsMemory::map(spec.mapping_len(OsMemory::page_size()).unwrap()).unwrap();
         let extent = Extent::new(
             ExtentId::from_index(1).unwrap(),
-            Owner::for_heap(HeapId::ROOT),
+            test_heap_id(),
             mapping,
             spec,
         )
@@ -188,7 +278,7 @@ mod tests {
         let mapping = OsMemory::map(spec.mapping_len(OsMemory::page_size()).unwrap()).unwrap();
         let extent = Extent::new(
             ExtentId::from_index(2).unwrap(),
-            Owner::for_heap(HeapId::ROOT),
+            test_heap_id(),
             mapping,
             spec,
         )
@@ -204,7 +294,7 @@ mod tests {
         let mapping = OsMemory::map(spec.mapping_len(OsMemory::page_size()).unwrap()).unwrap();
         let mut extent = Extent::new(
             ExtentId::from_index(3).unwrap(),
-            Owner::for_heap(HeapId::ROOT),
+            test_heap_id(),
             mapping,
             spec,
         )
@@ -220,7 +310,7 @@ mod tests {
         let mapping = OsMemory::map(spec.mapping_len(OsMemory::page_size()).unwrap()).unwrap();
         let mut extent = Extent::new(
             ExtentId::from_index(4).unwrap(),
-            Owner::for_heap(HeapId::ROOT),
+            test_heap_id(),
             mapping,
             spec,
         )
@@ -236,7 +326,7 @@ mod tests {
         let mapping = OsMemory::map(512 * 1024).unwrap();
         let mut extent = Extent::new(
             ExtentId::from_index(5).unwrap(),
-            Owner::for_heap(HeapId::ROOT),
+            test_heap_id(),
             mapping,
             spec,
         )
@@ -253,7 +343,7 @@ mod tests {
         let mapping = OsMemory::map(spec.mapping_len(OsMemory::page_size()).unwrap()).unwrap();
         let mut extent = Extent::new(
             ExtentId::from_index(6).unwrap(),
-            Owner::for_heap(HeapId::ROOT),
+            test_heap_id(),
             mapping,
             spec,
         )

@@ -53,10 +53,11 @@ impl<T> SlotStore<T> {
         self.slot_mut(index).is_some_and(Slot::release)
     }
 
-    pub(crate) fn insert(&mut self, index: usize, value: T) -> Result<(), SlotStoreError> {
+    /// Place a movable value into a reserved slot (reserved → occupied).
+    pub(crate) fn place(&mut self, index: usize, value: T) -> Result<(), SlotStoreError> {
         self.slot_mut(index)
             .ok_or(SlotStoreError::InvalidIndex)?
-            .insert(value)
+            .place(value)
     }
 
     pub(crate) fn get_mut(&mut self, index: usize) -> Option<&mut T> {
@@ -177,7 +178,7 @@ impl<T> Slot<T> {
         true
     }
 
-    fn insert(&mut self, value: T) -> Result<(), SlotStoreError> {
+    fn place(&mut self, value: T) -> Result<(), SlotStoreError> {
         if self.state.is_occupied() {
             return Err(SlotStoreError::Occupied);
         }
@@ -321,11 +322,11 @@ mod tests {
     }
 
     #[test]
-    fn slot_store_insert_get_remove_round_trip() {
+    fn slot_store_place_get_remove_round_trip() {
         let mut store = SlotStore::<u32>::new(4);
         let index = store.reserve().unwrap();
 
-        assert_eq!(store.insert(index, 42), Ok(()));
+        assert_eq!(store.place(index, 42), Ok(()));
         assert_eq!(store.get_mut(index).copied(), Some(42));
         assert_eq!(store.remove(index), Some(42));
         assert_eq!(store.get_mut(index), None);
@@ -335,7 +336,7 @@ mod tests {
     fn slot_store_get_mut_allows_mutation() {
         let mut store = SlotStore::<u32>::new(4);
         let index = store.reserve().unwrap();
-        assert_eq!(store.insert(index, 42), Ok(()));
+        assert_eq!(store.place(index, 42), Ok(()));
 
         *store.get_mut(index).unwrap() = 7;
 
@@ -343,21 +344,21 @@ mod tests {
     }
 
     #[test]
-    fn slot_store_rejects_occupied_insert() {
+    fn slot_store_rejects_occupied_place() {
         let mut store = SlotStore::<u32>::new(4);
         let index = store.reserve().unwrap();
-        assert_eq!(store.insert(index, 1), Ok(()));
+        assert_eq!(store.place(index, 1), Ok(()));
 
-        assert_eq!(store.insert(index, 2), Err(SlotStoreError::Occupied));
+        assert_eq!(store.place(index, 2), Err(SlotStoreError::Occupied));
         assert_eq!(store.get_mut(index).copied(), Some(1));
     }
 
     #[test]
-    fn slot_store_rejects_unreserved_insert() {
+    fn slot_store_rejects_unreserved_place() {
         let mut store = SlotStore::<u32>::new(4);
         assert_eq!(store.reserve(), Some(0));
 
-        assert_eq!(store.insert(1, 2), Err(SlotStoreError::NotReserved));
+        assert_eq!(store.place(1, 2), Err(SlotStoreError::NotReserved));
         assert_eq!(store.get_mut(1), None);
     }
 
@@ -366,7 +367,7 @@ mod tests {
         let mut store = SlotStore::<u32>::new(1);
         assert_eq!(store.reserve(), Some(0));
 
-        assert_eq!(store.insert(1, 2), Err(SlotStoreError::InvalidIndex));
+        assert_eq!(store.place(1, 2), Err(SlotStoreError::InvalidIndex));
         assert!(!store.release(1));
     }
 
@@ -378,10 +379,7 @@ mod tests {
             let occupied = store.reserve().unwrap();
             let reserved = store.reserve().unwrap();
 
-            assert_eq!(
-                store.insert(occupied, DropCounter { drops: &drops }),
-                Ok(())
-            );
+            assert_eq!(store.place(occupied, DropCounter { drops: &drops }), Ok(()));
             assert_ne!(occupied, reserved);
         }
 

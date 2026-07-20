@@ -72,7 +72,7 @@ where
             return Err(ArenaError::InvalidReservation);
         };
 
-        self.slots.insert(index, value).map_err(ArenaError::from)?;
+        self.slots.place(index, value).map_err(ArenaError::from)?;
 
         Ok(reservation.id)
     }

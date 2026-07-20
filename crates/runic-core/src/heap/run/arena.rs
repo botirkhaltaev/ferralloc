@@ -6,8 +6,10 @@ pub(crate) type RunArena = Arena<Run, RunId>;
 
 #[cfg(test)]
 mod tests {
+    use core::num::NonZeroU32;
+
     use crate::{
-        heap::{Owner, RUN_SIZE, Run, RunId},
+        heap::{HeapId, RUN_SIZE, Run, RunId},
         layout::LayoutSpec,
         memory::OsMemory,
         size_class::SizeClasses,
@@ -22,7 +24,8 @@ mod tests {
         let spec = LayoutSpec::from_size_align(64, 8).unwrap();
         let class = SizeClasses::for_layout(spec).unwrap();
 
-        Run::new(id, Owner::Central, mapping, class)
+        let heap = HeapId::new(0, NonZeroU32::MIN).unwrap();
+        Run::new(id, heap, mapping, class)
     }
 
     fn arena_with_capacity(capacity: usize) -> RunArena {

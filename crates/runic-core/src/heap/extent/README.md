@@ -11,8 +11,9 @@ Extent metadata owns dedicated large allocations.
 
 ## Invariants
 
-- An extent owns one mapping dedicated to one returned allocation.
+- An extent owns one mapping dedicated to one returned allocation and stores a `HeapId`.
 - Frees must use the exact returned pointer, not an interior pointer.
+- Remote frees claim pending before enqueue; only the owning heap (or draining freer) completes the free.
 - Page-map entries must be removed before extent metadata is removed.
 - `ExtentInit::Zeroed` memsets only on cache hits (size from `LayoutSpec`); fresh anonymous mappings skip that memset.
 - `ExtentCache` retention must stay within configured slot and byte budgets.
