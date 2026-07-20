@@ -583,19 +583,15 @@ impl AllocatorState {
 
         if heap.is_active() {
             RunHeap::claim_free(run, ptr).map_err(AllocatorError::from)?;
-            if let Err(error) = self.heaps.push_remote_batch(
-                heap_id,
-                &RemoteList::from_ends(ptr, ptr),
-            ) {
+            if let Err(error) = self
+                .heaps
+                .push_remote_batch(heap_id, &RemoteList::from_ends(ptr, ptr))
+            {
                 // SAFETY: PageMap stores only pointers published from this allocator's live RunArena.
                 if unsafe { run.as_ref() }.unclaim(ptr).is_err() {
                     Self::abort_internal();
                 }
-                if self
-                    .heaps
-                    .get(heap_id)
-                    .is_some_and(Heap::is_draining)
-                {
+                if self.heaps.get(heap_id).is_some_and(Heap::is_draining) {
                     return self.dealloc_run_draining(heap_id, run, ptr, pages);
                 }
                 return Err(AllocatorError::from(error));
@@ -666,18 +662,14 @@ impl AllocatorState {
 
         if heap.is_active() {
             ExtentHeap::claim_free(extent).map_err(AllocatorError::from)?;
-            if let Err(error) = self.heaps.push_remote_batch(
-                heap_id,
-                &RemoteList::from_ends(ptr, ptr),
-            ) {
+            if let Err(error) = self
+                .heaps
+                .push_remote_batch(heap_id, &RemoteList::from_ends(ptr, ptr))
+            {
                 if ExtentHeap::unclaim(extent).is_err() {
                     Self::abort_internal();
                 }
-                if self
-                    .heaps
-                    .get(heap_id)
-                    .is_some_and(Heap::is_draining)
-                {
+                if self.heaps.get(heap_id).is_some_and(Heap::is_draining) {
                     return self.dealloc_extent_draining(heap_id, extent, ptr, pages);
                 }
                 return Err(AllocatorError::from(error));
@@ -988,12 +980,8 @@ mod tests {
         let spec = LayoutSpec::from_layout(layout);
         let class = SizeClasses::id_for(spec).unwrap();
         let id = acquire_id(&mut state);
-        let first = state
-            .allocate(Some(id), Some(class), spec, &pages)
-            .unwrap();
-        let second = state
-            .allocate(Some(id), Some(class), spec, &pages)
-            .unwrap();
+        let first = state.allocate(Some(id), Some(class), spec, &pages).unwrap();
+        let second = state.allocate(Some(id), Some(class), spec, &pages).unwrap();
 
         assert_eq!(state.release_heap(id, &pages), Ok(()));
         assert_eq!(state.dealloc(first, None, &pages), Ok(()));

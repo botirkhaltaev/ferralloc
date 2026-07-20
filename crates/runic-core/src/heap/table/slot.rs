@@ -1,7 +1,4 @@
-use core::{
-    num::NonZeroU32,
-    ptr::NonNull,
-};
+use core::{num::NonZeroU32, ptr::NonNull};
 
 use crate::{
     config::AllocatorConfig,

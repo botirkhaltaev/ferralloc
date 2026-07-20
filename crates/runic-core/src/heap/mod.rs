@@ -105,8 +105,7 @@ impl Heap {
     }
 
     pub(crate) fn begin_drain(&self) {
-        self.mode
-            .store(HeapMode::Draining.raw(), Ordering::Release);
+        self.mode.store(HeapMode::Draining.raw(), Ordering::Release);
     }
 
     pub(crate) fn reactivate(&mut self, id: HeapId) {
