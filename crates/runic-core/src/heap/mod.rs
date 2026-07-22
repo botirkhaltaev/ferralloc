@@ -183,8 +183,8 @@ impl Heap {
 
     /// Owner-local non-cached free: flush inbox if needed, then free.
     ///
-    /// Callable via TLS installed `Heap` without taking the table mutex. Does not wrap the
-    /// cached-run hit (`Run::free_local`); that path stays on `ThreadHeap` for minimal work.
+    /// Callable via a TLS-bound `Heap` without taking the table mutex. Does not wrap the
+    /// cached-run hit (`Run::free_local`); that path stays on `ThreadHeap::free` for minimal work.
     pub(crate) fn free_run_owner(
         &mut self,
         run: NonNull<Run>,

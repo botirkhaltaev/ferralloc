@@ -321,15 +321,6 @@ randomized cross-thread traces pass
 no allocator-internal heap allocation is introduced
 ```
 
-Primary references:
-
-```text
-docs/thread-local-frontend-scope.md
-docs/thread-local-heap-plan.md
-docs/remote-free-protocol.md
-docs/span-ownership-evaluation.md
-```
-
 ### v0.6 Later: Remote Free Queue Optimization
 
 Goal:
@@ -366,8 +357,6 @@ guard pages for selected large allocations
 randomized placement only after deterministic paths are stable
 ```
 
-Primary reference: `docs/allocator-hardening-policy.md`.
-
 ### v0.8 Later: Backend Regions And Hugepage-Aware Allocation
 
 Goal:
@@ -375,13 +364,6 @@ Goal:
 ```text
 Explore backend region ownership, decay, purge, and hugepage-aware mapping only
 after mapping lifecycle and heap ownership are explicit.
-```
-
-Primary references:
-
-```text
-docs/span-ownership-evaluation.md
-docs/hugepage-backend-exploration.md
 ```
 
 ## Reference Lessons

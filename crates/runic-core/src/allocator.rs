@@ -71,17 +71,13 @@ impl Allocator {
         // SAFETY: inner is retained by this Allocator while installed from self.inner.
         let inner_ref = unsafe { inner.as_ref() };
         if let Some(class) = class
-            && let Some(ptr) =
-                THREAD_HEAP.with(|heap| heap.allocate_run(inner, class, inner_ref.pages()))
+            && let Some(ptr) = THREAD_HEAP.with(|tls| tls.alloc(inner, class, inner_ref.pages()))
         {
             return ptr.as_ptr();
         }
 
-        if class.is_some() {
-            THREAD_HEAP.with(|heap| heap.release_if_different(inner));
-        }
         let mut table = inner_ref.table.lock();
-        let heap_id = THREAD_HEAP.with(|heap| heap.get_or_acquire(inner, &mut table));
+        let heap_id = THREAD_HEAP.with(|tls| tls.bind(inner, &mut table));
         let pages = inner_ref.pages();
         let Some(heap_id) = heap_id else {
             return null_mut();
@@ -128,13 +124,10 @@ impl Allocator {
         if let PageOwner::Run(run) = entry {
             // SAFETY: PageMap stores only pointers published from this allocator's live Arena<Run>.
             let heap_id = unsafe { run.as_ref() }.heap_id();
-            if let Some(result) =
-                THREAD_HEAP.with(|thread_heap| thread_heap.free_run(inner, heap_id, run, ptr))
-            {
-                if result.is_err() {
-                    Self::abort();
-                }
-                return;
+            match THREAD_HEAP.with(|tls| tls.free(inner, heap_id, run, ptr)) {
+                Ok(true) => return,
+                Ok(false) => {}
+                Err(_) => Self::abort(),
             }
         }
 
@@ -230,7 +223,7 @@ impl Allocator {
             // SAFETY: inner is retained by this Allocator while installed from self.inner.
             let inner_ref = unsafe { inner.as_ref() };
             let mut table = inner_ref.table.lock();
-            let heap_id = THREAD_HEAP.with(|heap| heap.get_or_acquire(inner, &mut table));
+            let heap_id = THREAD_HEAP.with(|tls| tls.bind(inner, &mut table));
             let Some(heap_id) = heap_id else {
                 return null_mut();
             };
@@ -299,7 +292,7 @@ impl Allocator {
         inner_ref: &AllocatorInner,
         ptr: NonNull<u8>,
     ) -> Result<(), AllocatorError> {
-        let current_heap = THREAD_HEAP.with(|heap| heap.heap_id(inner));
+        let current_heap = THREAD_HEAP.with(|tls| tls.bound(inner));
         let pages = inner_ref.pages();
         let Some(entry) = pages.get(ptr) else {
             return Err(AllocatorError::UnknownPointer);
@@ -363,7 +356,7 @@ impl Allocator {
                 }
                 // Publish is mode-aware: Active → inbox, Draining → complete under lock.
                 // A returned list may be a displaced previous batch; never unclaim `ptr` here.
-                Self::enqueue_remote(inner_ref, heap_id, ptr)
+                Self::publish_remote(inner_ref, heap_id, ptr)
             }
             HeapMode::Draining => {
                 let mut table = inner_ref.table.lock();
@@ -427,7 +420,7 @@ impl Allocator {
                 }
                 // Publish is mode-aware: Active → inbox, Draining → complete under lock.
                 // A returned list may be a displaced previous batch; never unclaim `ptr` here.
-                Self::enqueue_remote(inner_ref, heap_id, ptr)
+                Self::publish_remote(inner_ref, heap_id, ptr)
             }
             HeapMode::Draining => {
                 let mut table = inner_ref.table.lock();
@@ -445,12 +438,12 @@ impl Allocator {
     }
 
     /// Coalesce onto the TLS remote batch; publish any returned list (Active or Draining).
-    fn enqueue_remote(
+    fn publish_remote(
         inner_ref: &AllocatorInner,
         heap_id: HeapId,
         ptr: NonNull<u8>,
     ) -> Result<(), AllocatorError> {
-        let pending = THREAD_HEAP.with(|thread| thread.enqueue_remote(heap_id, ptr));
+        let pending = THREAD_HEAP.with(|tls| tls.batch(heap_id, ptr));
         let Some((id, list)) = pending else {
             return Ok(());
         };
@@ -811,7 +804,7 @@ mod tests {
 
         // Drain the freer's retained second-heap batch so TLS state does not leak across tests.
         let mut pending = None;
-        THREAD_HEAP.with(|thread| pending = thread.take_remote());
+        THREAD_HEAP.with(|tls| pending = tls.take_batch());
         let (publish_id, list) = pending.expect("second remote free retained in TLS batch");
         assert_eq!(publish_id, second);
         let mut table = inner_ref.table.lock();
