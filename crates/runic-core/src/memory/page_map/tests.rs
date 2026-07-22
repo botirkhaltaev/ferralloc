@@ -460,6 +460,34 @@ fn page_map_many_single_page_extents_share_one_l2_table_without_exhaustion() {
 }
 
 #[test]
+fn page_map_publish_run_unpublish_run_round_trip() {
+    let mapping = TestMapping::new(PAGE_SIZE);
+    let map = PageMap::new();
+    let owner = owner_ptr(1);
+    let range = AddressRange::new(mapping.base(), mapping.len());
+
+    map.publish_run(range, owner).unwrap();
+    assert_eq!(map.get(mapping.base()), Some(PageOwner::Run(owner)));
+
+    map.unpublish_run(range, owner).unwrap();
+    assert!(map.get(mapping.base()).is_none());
+}
+
+#[test]
+fn page_map_publish_extent_unpublish_extent_round_trip() {
+    let mapping = TestMapping::new(PAGE_SIZE);
+    let map = PageMap::new();
+    let owner = owner_ptr(2);
+    let range = AddressRange::new(mapping.base(), mapping.len());
+
+    map.publish_extent(range, owner).unwrap();
+    assert_eq!(map.get(mapping.base()), Some(PageOwner::Extent(owner)));
+
+    map.unpublish_extent(range, owner).unwrap();
+    assert!(map.get(mapping.base()).is_none());
+}
+
+#[test]
 fn page_map_remove_range_crosses_l2_boundary() {
     let len = (L2_ENTRIES + 2) * PAGE_SIZE;
     let mapping = TestMapping::new(len);
