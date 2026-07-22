@@ -337,8 +337,12 @@ impl ThreadHeap {
 
     fn publish_outbound(&self, core_ref: &AllocatorCore) {
         while let Some((id, list)) = self.take_remote() {
-            let state = core_ref.state().lock();
-            if state.heaps.push_remote_batch(id, &list).is_err() {
+            let mut state = core_ref.state().lock();
+            if state
+                .heaps
+                .push_remote_batch(id, &list, core_ref.pages())
+                .is_err()
+            {
                 abort();
             }
         }

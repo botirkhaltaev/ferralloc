@@ -1,4 +1,4 @@
-mod inbox;
+pub(crate) mod inbox;
 mod slot;
 mod thread;
 

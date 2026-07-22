@@ -330,22 +330,24 @@ impl Allocator {
                 unsafe { run.as_ref() }
                     .claim_free(ptr)
                     .map_err(AllocatorError::from)?;
-                if let Err(error) = Self::enqueue_remote(core_ref, heap_id, ptr) {
-                    // SAFETY: PageMap stores only pointers published from this allocator's live Arena<Run>.
-                    if unsafe { run.as_ref() }.unclaim(ptr).is_err() {
-                        AllocatorState::abort_internal();
+                // Re-check after claim: Pending keeps the heap live, but the slot may still
+                // have gone Free/stale if the HeapId is wrong.
+                {
+                    let state = core_ref.state().lock();
+                    match state.heaps.get(heap_id).map(Heap::mode) {
+                        Some(HeapMode::Active | HeapMode::Draining) => {}
+                        Some(HeapMode::Free) | None => {
+                            // SAFETY: we just claimed this block on the live PageMap run.
+                            if unsafe { run.as_ref() }.unclaim(ptr).is_err() {
+                                Self::abort();
+                            }
+                            return Err(AllocatorError::InvalidMetadata);
+                        }
                     }
-                    let mut state = core_ref.state().lock();
-                    let heap = state
-                        .heaps
-                        .get(heap_id)
-                        .ok_or(AllocatorError::InvalidMetadata)?;
-                    if heap.is_draining() {
-                        return state.dealloc_run_draining(heap_id, run, ptr, pages);
-                    }
-                    return Err(error);
                 }
-                Ok(())
+                // Publish is mode-aware: Active → inbox, Draining → complete under lock.
+                // A returned list may be a displaced previous batch; never unclaim `ptr` here.
+                Self::enqueue_remote(core_ref, heap_id, ptr)
             }
             HeapMode::Draining => {
                 let mut state = core_ref.state().lock();
@@ -386,22 +388,22 @@ impl Allocator {
                 unsafe { extent.as_ref() }
                     .claim_free()
                     .map_err(AllocatorError::from)?;
-                if let Err(error) = Self::enqueue_remote(core_ref, heap_id, ptr) {
-                    // SAFETY: PageMap stores only pointers published from this allocator's live arena.
-                    if unsafe { extent.as_ref() }.unclaim().is_err() {
-                        AllocatorState::abort_internal();
+                {
+                    let state = core_ref.state().lock();
+                    match state.heaps.get(heap_id).map(Heap::mode) {
+                        Some(HeapMode::Active | HeapMode::Draining) => {}
+                        Some(HeapMode::Free) | None => {
+                            // SAFETY: we just claimed this extent on the live PageMap entry.
+                            if unsafe { extent.as_ref() }.unclaim().is_err() {
+                                Self::abort();
+                            }
+                            return Err(AllocatorError::InvalidMetadata);
+                        }
                     }
-                    let mut state = core_ref.state().lock();
-                    let heap = state
-                        .heaps
-                        .get(heap_id)
-                        .ok_or(AllocatorError::InvalidMetadata)?;
-                    if heap.is_draining() {
-                        return state.dealloc_extent_draining(heap_id, extent, ptr, pages);
-                    }
-                    return Err(error);
                 }
-                Ok(())
+                // Publish is mode-aware: Active → inbox, Draining → complete under lock.
+                // A returned list may be a displaced previous batch; never unclaim `ptr` here.
+                Self::enqueue_remote(core_ref, heap_id, ptr)
             }
             HeapMode::Draining => {
                 let mut state = core_ref.state().lock();
@@ -411,7 +413,7 @@ impl Allocator {
         }
     }
 
-    /// Coalesce onto the TLS remote batch; publish any returned list to its target inbox.
+    /// Coalesce onto the TLS remote batch; publish any returned list (Active or Draining).
     fn enqueue_remote(
         core_ref: &AllocatorCore,
         heap_id: HeapId,
@@ -422,10 +424,10 @@ impl Allocator {
             return Ok(());
         };
 
-        let state = core_ref.state().lock();
+        let mut state = core_ref.state().lock();
         state
             .heaps
-            .push_remote_batch(id, &list)
+            .push_remote_batch(id, &list, core_ref.pages())
             .map_err(AllocatorError::from)
     }
 }
@@ -646,13 +648,6 @@ impl AllocatorState {
         let _ = self.heaps.try_reclaim_heap(heap_id);
         Ok(())
     }
-
-    #[cold]
-    #[inline(never)]
-    fn abort_internal() -> ! {
-        // SAFETY: abort terminates the process and does not unwind across allocator boundaries.
-        unsafe { libc::abort() }
-    }
 }
 
 impl Drop for Allocator {
@@ -716,6 +711,7 @@ impl From<HeapError> for AllocatorError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::heap::table::inbox::RemoteList;
 
     /// Lazily-initialized core for an `Allocator` created in this test.
     fn allocator_core(allocator: &Allocator) -> &AllocatorCore {
@@ -857,6 +853,81 @@ mod tests {
         assert_eq!(
             Allocator::dealloc_run_slow(core_ref, run, ptr, None, core_ref.pages()),
             Err(AllocatorError::DoubleFree)
+        );
+    }
+
+    #[test]
+    fn retained_remote_batch_completes_under_draining() {
+        let allocator = Allocator::new();
+        let core_ref = allocator_core(&allocator);
+        let id = acquire_id(core_ref);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let ptr = allocate_small(core_ref, id, layout);
+        let run = run_of(core_ref, ptr);
+
+        // Claim without publishing, then drain the owner — late publish must complete.
+        assert_eq!(unsafe { run.as_ref() }.claim_free(ptr), Ok(()));
+
+        {
+            let mut state = core_ref.state().lock();
+            assert_eq!(state.release_heap(id, core_ref.pages()), Ok(()));
+            assert_eq!(
+                state.heaps.get(id).map(Heap::mode),
+                Some(HeapMode::Draining)
+            );
+            let list = RemoteList::from_ends(ptr, ptr);
+            assert_eq!(
+                state.heaps.push_remote_batch(id, &list, core_ref.pages()),
+                Ok(())
+            );
+            assert!(state.heaps.get(id).is_none());
+        }
+    }
+
+    #[test]
+    fn target_change_publishes_previous_batch_under_draining() {
+        let allocator = Allocator::new();
+        let core_ref = allocator_core(&allocator);
+        let first = acquire_id(core_ref);
+        let second = acquire_id(core_ref);
+        let layout = Layout::from_size_align(64, 8).unwrap();
+
+        let ptr_a = allocate_small(core_ref, first, layout);
+        let run_a = run_of(core_ref, ptr_a);
+        assert_eq!(
+            Allocator::dealloc_run_slow(core_ref, run_a, ptr_a, None, core_ref.pages()),
+            Ok(())
+        );
+
+        {
+            let mut state = core_ref.state().lock();
+            assert_eq!(state.release_heap(first, core_ref.pages()), Ok(()));
+            assert_eq!(
+                state.heaps.get(first).map(Heap::mode),
+                Some(HeapMode::Draining)
+            );
+        }
+
+        let ptr_b = allocate_small(core_ref, second, layout);
+        let run_b = run_of(core_ref, ptr_b);
+        // Target change publishes the draining heap's retained batch, then retains ptr_b.
+        assert_eq!(
+            Allocator::dealloc_run_slow(core_ref, run_b, ptr_b, None, core_ref.pages()),
+            Ok(())
+        );
+        assert!(core_ref.state().lock().heaps.get(first).is_none());
+
+        // Drain the freer's retained second-heap batch so TLS state does not leak across tests.
+        let mut pending = None;
+        THREAD_HEAP.with(|thread| pending = thread.take_remote());
+        let (publish_id, list) = pending.expect("second remote free retained in TLS batch");
+        assert_eq!(publish_id, second);
+        let mut state = core_ref.state().lock();
+        assert_eq!(
+            state
+                .heaps
+                .push_remote_batch(publish_id, &list, core_ref.pages()),
+            Ok(())
         );
     }
 

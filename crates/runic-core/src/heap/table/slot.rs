@@ -3,7 +3,7 @@ use core::{num::NonZeroU32, ptr::NonNull};
 use crate::{
     arena::Arena,
     config::AllocatorConfig,
-    heap::{ExtentHeapError, Heap, HeapId, RunHeapError},
+    heap::{ExtentHeapError, Heap, HeapId, HeapMode, RunHeapError},
     memory::PageMap,
 };
 
@@ -85,14 +85,37 @@ impl HeapTable {
         self.heaps.get_mut(index)
     }
 
-    pub(crate) fn push_remote_batch(&self, id: HeapId, list: &RemoteList) -> Result<(), HeapError> {
-        let heap = self.get(id).ok_or(HeapError::InvalidHeap)?;
-        if !heap.is_active() {
-            return Err(HeapError::InvalidHeap);
+    /// Publish a claimed remote-free batch to `id`.
+    ///
+    /// - `Active`: enqueue onto the heap inbox (owner flushes later).
+    /// - `Draining`: enqueue then complete under the table lock, then try reclaim.
+    /// - `Free` / stale generation: error (caller must not drop claimed nodes).
+    pub(crate) fn push_remote_batch(
+        &mut self,
+        id: HeapId,
+        list: &RemoteList,
+        pages: &PageMap,
+    ) -> Result<(), HeapError> {
+        let mode = self.get(id).ok_or(HeapError::InvalidHeap)?.mode();
+        match mode {
+            HeapMode::Active => {
+                self.get(id)
+                    .ok_or(HeapError::InvalidHeap)?
+                    .inbox()
+                    .push_batch(list);
+                Ok(())
+            }
+            HeapMode::Draining => {
+                {
+                    let heap = self.get_mut(id).ok_or(HeapError::InvalidHeap)?;
+                    heap.inbox().push_batch(list);
+                    heap.flush(pages)?;
+                }
+                let _ = self.try_reclaim_heap(id);
+                Ok(())
+            }
+            HeapMode::Free => Err(HeapError::InvalidHeap),
         }
-
-        heap.inbox().push_batch(list);
-        Ok(())
     }
 
     pub(crate) fn release_heap(&mut self, id: HeapId, pages: &PageMap) -> Result<(), HeapError> {

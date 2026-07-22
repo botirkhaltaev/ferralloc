@@ -94,10 +94,6 @@ impl Heap {
         self.mode() == HeapMode::Active
     }
 
-    pub(crate) fn is_draining(&self) -> bool {
-        self.mode() == HeapMode::Draining
-    }
-
     pub(crate) fn is_free(&self) -> bool {
         self.mode() == HeapMode::Free
     }
