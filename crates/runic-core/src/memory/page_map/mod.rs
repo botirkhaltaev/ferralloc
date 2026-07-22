@@ -14,7 +14,6 @@ use crate::{
 
 mod entry;
 mod page;
-mod span;
 mod table;
 
 #[cfg(test)]
@@ -29,7 +28,6 @@ const L2_BITS: usize = 12;
 const L2_ENTRIES: usize = 1 << L2_BITS;
 const L1_ENTRIES: usize = 1 << (48 - PAGE_SHIFT - L2_BITS);
 const ADDRESSABLE_PAGES: usize = L1_ENTRIES * L2_ENTRIES;
-const SPAN_SLOTS: usize = 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PageMapError {
@@ -112,12 +110,7 @@ impl PageMap {
             let mut result = Ok(());
 
             for segment in range.segments() {
-                let published = match entry {
-                    PageOwner::Run(_) => l1.entry(segment.l1)?.assign_direct(segment.l2, occupied),
-                    PageOwner::Extent(_) => l1.entry(segment.l1)?.assign_span(segment.l2, occupied),
-                };
-
-                if let Err(error) = published {
+                if let Err(error) = l1.entry(segment.l1)?.assign(segment.l2, occupied) {
                     result = Err(error);
                     break;
                 }

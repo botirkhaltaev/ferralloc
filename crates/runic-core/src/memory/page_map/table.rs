@@ -8,10 +8,9 @@ use core::{
 use crate::memory::{Mapping, OsMemory};
 
 use super::{
-    L1_ENTRIES, L2_ENTRIES, PageMapError, SPAN_SLOTS,
+    L1_ENTRIES, L2_ENTRIES, PageMapError,
     entry::{AtomicMapEntry, MapEntry},
     page::{L1Index, L2Index, L2Segment},
-    span::{SpanRecord, SpanSlot},
 };
 
 #[repr(C)]
@@ -113,11 +112,12 @@ impl L1Entry {
         self.l2_table_ref()?.get(index)
     }
 
-    pub(super) fn assign_direct(
-        &self,
-        segment: L2Segment,
-        value: MapEntry,
-    ) -> Result<(), PageMapError> {
+    /// Assigns every page in `segment` the same page-map entry.
+    ///
+    /// Runs and extents share this one representation; there is no alternate
+    /// encoding to fall back to, so a segment either fits directly or the
+    /// insert fails (see `memory/AGENTS.md`).
+    pub(super) fn assign(&self, segment: L2Segment, value: MapEntry) -> Result<(), PageMapError> {
         let occupied_pages = self
             .occupied_pages
             .load(Ordering::Acquire)
@@ -127,27 +127,7 @@ impl L1Entry {
             .l2_table_ref()
             .ok_or(PageMapError::MetadataAllocFailed)?;
 
-        table.assign_direct(segment, value)?;
-        self.occupied_pages.store(occupied_pages, Ordering::Release);
-
-        Ok(())
-    }
-
-    pub(super) fn assign_span(
-        &self,
-        segment: L2Segment,
-        value: MapEntry,
-    ) -> Result<(), PageMapError> {
-        let occupied_pages = self
-            .occupied_pages
-            .load(Ordering::Acquire)
-            .checked_add(segment.pages())
-            .ok_or(PageMapError::InvalidRange)?;
-        let table = self
-            .l2_table_ref()
-            .ok_or(PageMapError::MetadataAllocFailed)?;
-
-        table.assign_span(segment, value)?;
+        table.assign(segment, value)?;
         self.occupied_pages.store(occupied_pages, Ordering::Release);
 
         Ok(())
@@ -171,19 +151,12 @@ impl L1Entry {
 #[repr(C)]
 pub(super) struct L2Table {
     pub(super) pages: [AtomicMapEntry; L2_ENTRIES],
-    pub(super) spans: [SpanSlot; SPAN_SLOTS],
 }
 
 impl L2Table {
     fn get(&self, index: L2Index) -> Option<MapEntry> {
         let page = self.pages.get(index.get())?.load();
-        if !page.is_empty() {
-            return Some(page);
-        }
-
-        self.spans
-            .iter()
-            .find_map(|slot| slot.record_containing(index).map(SpanRecord::entry))
+        if page.is_empty() { None } else { Some(page) }
     }
 
     fn owns_segment(&self, segment: L2Segment, expected: MapEntry) -> Result<bool, PageMapError> {
@@ -195,33 +168,15 @@ impl L2Table {
             .pages
             .get(segment.range())
             .ok_or(PageMapError::InvalidRange)?;
-        if pages.iter().all(|entry| entry.load() == expected) {
-            return Ok(true);
-        }
 
-        Ok(self
-            .spans
-            .iter()
-            .any(|slot| slot.matches(segment, expected)))
+        Ok(pages.iter().all(|entry| entry.load() == expected))
     }
 
-    fn assign_direct(&self, segment: L2Segment, value: MapEntry) -> Result<(), PageMapError> {
-        self.write_pages(segment, value)
-    }
-
-    fn assign_span(&self, segment: L2Segment, value: MapEntry) -> Result<(), PageMapError> {
-        if self.install_span(segment, value) {
-            return Ok(());
-        }
-
+    fn assign(&self, segment: L2Segment, value: MapEntry) -> Result<(), PageMapError> {
         self.write_pages(segment, value)
     }
 
     fn clear_segment(&self, segment: L2Segment) -> Result<(), PageMapError> {
-        if self.clear_span(segment) {
-            return Ok(());
-        }
-
         self.write_pages(segment, MapEntry::empty())
     }
 
@@ -231,26 +186,6 @@ impl L2Table {
         };
 
         pages.iter().all(|entry| entry.load().is_empty())
-            && self.spans.iter().all(|slot| !slot.overlaps(segment))
-    }
-
-    fn install_span(&self, segment: L2Segment, entry: MapEntry) -> bool {
-        let record = SpanRecord::new(segment, entry);
-        let Some(slot) = self.spans.iter().find(|slot| slot.is_empty()) else {
-            return false;
-        };
-
-        slot.set(record);
-        true
-    }
-
-    fn clear_span(&self, segment: L2Segment) -> bool {
-        let Some(slot) = self.spans.iter().find(|slot| slot.covers(segment)) else {
-            return false;
-        };
-
-        slot.clear();
-        true
     }
 
     fn write_pages(&self, segment: L2Segment, value: MapEntry) -> Result<(), PageMapError> {

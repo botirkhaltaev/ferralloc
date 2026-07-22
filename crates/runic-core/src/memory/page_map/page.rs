@@ -86,10 +86,6 @@ impl L2Segment {
         start..end
     }
 
-    pub(super) fn contains(self, index: L2Index) -> bool {
-        self.range().contains(&index.get())
-    }
-
     pub(super) fn pages(self) -> u32 {
         self.pages.get_u32()
     }

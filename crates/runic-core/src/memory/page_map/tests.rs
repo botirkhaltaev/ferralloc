@@ -33,12 +33,6 @@ fn l2_table_for(map: &PageMap, ptr: NonNull<u8>) -> Option<&L2Table> {
     map.l1()?.entries.get(l1_index.get())?.l2_table_ref()
 }
 
-fn span_count(map: &PageMap, ptr: NonNull<u8>) -> usize {
-    l2_table_for(map, ptr).map_or(0, |table| {
-        table.spans.iter().filter(|slot| !slot.is_empty()).count()
-    })
-}
-
 fn direct_entry(map: &PageMap, ptr: NonNull<u8>) -> Option<MapEntry> {
     let (_, l2_index) = Page::containing(ptr).indexes()?;
 
@@ -120,18 +114,20 @@ fn page_map_insert_range_maps_extent_entry() {
 }
 
 #[test]
-fn page_map_insert_extent_range_uses_span_record() {
+fn page_map_insert_extent_range_uses_direct_entries() {
     let mapping = TestMapping::new(PAGE_SIZE * 2);
     let map = PageMap::new();
     let range = mapping.page_range();
 
     assert!(map.insert(range, extent(4)).is_ok());
 
-    assert_eq!(span_count(&map, mapping.base()), 1);
-    assert_eq!(direct_entry(&map, mapping.base()), Some(MapEntry::empty()));
+    assert_eq!(
+        direct_entry(&map, mapping.base()),
+        MapEntry::from_owner(extent(4))
+    );
     assert_eq!(
         direct_entry(&map, mapping.ptr_at(PAGE_SIZE)),
-        Some(MapEntry::empty())
+        MapEntry::from_owner(extent(4))
     );
 }
 
@@ -143,7 +139,6 @@ fn page_map_insert_run_range_uses_direct_entries() {
 
     assert!(map.insert(range, run(4)).is_ok());
 
-    assert_eq!(span_count(&map, mapping.base()), 0);
     assert_eq!(
         direct_entry(&map, mapping.base()),
         MapEntry::from_owner(run(4))
@@ -423,7 +418,7 @@ fn page_map_insert_range_crosses_l2_boundary() {
 }
 
 #[test]
-fn page_map_insert_extent_range_crosses_l2_boundary_with_spans() {
+fn page_map_insert_extent_range_crosses_l2_boundary() {
     let len = (L2_ENTRIES + 2) * PAGE_SIZE;
     let mapping = TestMapping::new(len);
     let map = PageMap::new();
@@ -436,16 +431,18 @@ fn page_map_insert_extent_range_crosses_l2_boundary_with_spans() {
     assert_eq!(map.get(mapping.base()), Some(extent(10)));
     assert_eq!(map.get(boundary), Some(extent(10)));
     assert_eq!(map.get(last), Some(extent(10)));
-    assert_eq!(span_count(&map, mapping.base()), 1);
-    assert_eq!(span_count(&map, boundary), 1);
 }
 
+/// A single L2 table has 4096 page slots; many more than 64 (the old span-slot
+/// bound) single-page extents must coexist in one table without failing, since
+/// extents now use the same unbounded direct-entry representation as runs.
 #[test]
-fn page_map_extent_span_exhaustion_falls_back_to_direct_entries() {
-    let mapping = TestMapping::new((SPAN_SLOTS + 1) * PAGE_SIZE);
+fn page_map_many_single_page_extents_share_one_l2_table_without_exhaustion() {
+    const EXTENT_COUNT: usize = 200;
+    let mapping = TestMapping::new(EXTENT_COUNT * PAGE_SIZE);
     let map = PageMap::new();
 
-    for index in 0..SPAN_SLOTS {
+    for index in 0..EXTENT_COUNT {
         let ptr = mapping.ptr_at(index * PAGE_SIZE);
         assert!(
             map.insert(
@@ -456,23 +453,10 @@ fn page_map_extent_span_exhaustion_falls_back_to_direct_entries() {
         );
     }
 
-    let fallback = mapping.ptr_at(SPAN_SLOTS * PAGE_SIZE);
-    assert!(
-        map.insert(PageRange::new(fallback, PAGE_SIZE).unwrap(), extent(10_000),)
-            .is_ok()
-    );
-
-    assert_eq!(span_count(&map, mapping.base()), SPAN_SLOTS);
-    assert_eq!(map.get(fallback), Some(extent(10_000)));
-    assert_eq!(
-        direct_entry(&map, fallback),
-        MapEntry::from_owner(extent(10_000))
-    );
-    assert_eq!(
-        map.remove(PageRange::new(fallback, PAGE_SIZE).unwrap(), extent(10_000),),
-        Ok(())
-    );
-    assert!(map.get(fallback).is_none());
+    for index in 0..EXTENT_COUNT {
+        let ptr = mapping.ptr_at(index * PAGE_SIZE);
+        assert_eq!(map.get(ptr), Some(extent(u32::try_from(index).unwrap())));
+    }
 }
 
 #[test]
