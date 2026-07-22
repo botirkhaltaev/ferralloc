@@ -17,11 +17,11 @@ pub(crate) use extent::Extent;
 pub(crate) use extent::heap::{ExtentHeap, ExtentHeapError, ExtentInit};
 pub(crate) use id::HeapId;
 pub(crate) use run::{RUN_SIZE, Run, RunError, RunHeap, RunHeapError, RunId};
-pub(crate) use table::{HeapError, HeapTable, Inbox, RemoteList, THREAD_HEAP};
+pub(crate) use table::{HeapError, HeapTable, Inbox, THREAD_HEAP};
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum HeapMode {
+pub(crate) enum HeapMode {
     Free = 0,
     Active = 1,
     Draining = 2,
@@ -122,7 +122,8 @@ impl Heap {
         true
     }
 
-    fn mode(&self) -> HeapMode {
+    /// Snapshot of this heap's Free/Active/Draining lifecycle state.
+    pub(crate) fn mode(&self) -> HeapMode {
         HeapMode::from_raw(self.mode.load(Ordering::Acquire)).unwrap_or(HeapMode::Free)
     }
 
