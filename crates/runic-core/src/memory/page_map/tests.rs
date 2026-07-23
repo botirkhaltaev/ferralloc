@@ -42,16 +42,6 @@ fn direct_entry(map: &PageMap, ptr: NonNull<u8>) -> Option<MapEntry> {
         .map(AtomicMapEntry::load)
 }
 
-fn insert(map: &PageMap, range: PageRange, owner: PageOwner) -> Result<(), PageMapError> {
-    let mut l1_mapping = map.l1_mapping.lock();
-    map.insert(&mut l1_mapping, range, owner)
-}
-
-fn remove(map: &PageMap, range: PageRange, owner: PageOwner) -> Result<(), PageMapError> {
-    let mut l1_mapping = map.l1_mapping.lock();
-    map.remove(&mut l1_mapping, range, owner)
-}
-
 struct TestMapping {
     mapping: crate::memory::Mapping,
 }
@@ -109,7 +99,7 @@ fn page_map_insert_range_maps_interior_pointer() {
     let map = PageMap::new();
     let range = mapping.page_range();
 
-    assert!(insert(&map, range, run(7)).is_ok());
+    assert!(map.insert(range, run(7)).is_ok());
 
     let interior = mapping.ptr_at(PAGE_SIZE + 17);
     assert_eq!(map.get(interior), Some(run(7)));
@@ -121,7 +111,7 @@ fn page_map_insert_range_maps_extent_entry() {
     let map = PageMap::new();
     let range = mapping.page_range();
 
-    assert!(insert(&map, range, extent(4)).is_ok());
+    assert!(map.insert(range, extent(4)).is_ok());
 
     let interior = mapping.ptr_at(PAGE_SIZE + 17);
     assert_eq!(map.get(interior), Some(extent(4)));
@@ -133,7 +123,7 @@ fn page_map_insert_extent_range_uses_direct_entries() {
     let map = PageMap::new();
     let range = mapping.page_range();
 
-    assert!(insert(&map, range, extent(4)).is_ok());
+    assert!(map.insert(range, extent(4)).is_ok());
 
     assert_eq!(
         direct_entry(&map, mapping.base()),
@@ -151,7 +141,7 @@ fn page_map_insert_run_range_uses_direct_entries() {
     let map = PageMap::new();
     let range = mapping.page_range();
 
-    assert!(insert(&map, range, run(4)).is_ok());
+    assert!(map.insert(range, run(4)).is_ok());
 
     assert_eq!(
         direct_entry(&map, mapping.base()),
@@ -169,8 +159,8 @@ fn page_map_remove_range_clears_mapped_pages() {
     let map = PageMap::new();
     let range = mapping.page_range();
 
-    assert!(insert(&map, range, run(8)).is_ok());
-    assert_eq!(remove(&map, range, run(8)), Ok(()));
+    assert!(map.insert(range, run(8)).is_ok());
+    assert_eq!(map.remove(range, run(8)), Ok(()));
 
     assert!(map.get(mapping.base()).is_none());
     let second = mapping.ptr_at(PAGE_SIZE);
@@ -183,25 +173,10 @@ fn page_map_remove_range_retains_empty_l2_table_for_stable_reads() {
     let map = PageMap::new();
     let range = mapping.page_range();
 
-    assert!(insert(&map, range, run(1)).is_ok());
+    assert!(map.insert(range, run(1)).is_ok());
     assert!(has_l2_table(&map, mapping.base()));
 
-    assert_eq!(remove(&map, range, run(1)), Ok(()));
-
-    assert!(map.get(mapping.base()).is_none());
-    assert!(has_l2_table(&map, mapping.base()));
-}
-
-#[test]
-fn page_map_remove_range_can_retain_empty_l2_table() {
-    let mapping = TestMapping::new(PAGE_SIZE);
-    let map = PageMap::new();
-    let range = mapping.page_range();
-
-    assert!(insert(&map, range, run(1)).is_ok());
-    assert!(has_l2_table(&map, mapping.base()));
-
-    assert_eq!(remove(&map, range, run(1)), Ok(()));
+    assert_eq!(map.remove(range, run(1)), Ok(()));
 
     assert!(map.get(mapping.base()).is_none());
     assert!(has_l2_table(&map, mapping.base()));
@@ -215,28 +190,16 @@ fn page_map_remove_range_keeps_non_empty_l2_table() {
     let second = mapping.ptr_at(PAGE_SIZE);
 
     assert!(
-        insert(
-            &map,
-            PageRange::from_aligned(first, PAGE_SIZE).unwrap(),
-            run(1)
-        )
-        .is_ok()
+        map.insert(PageRange::from_aligned(first, PAGE_SIZE).unwrap(), run(1))
+            .is_ok()
     );
     assert!(
-        insert(
-            &map,
-            PageRange::from_aligned(second, PAGE_SIZE).unwrap(),
-            run(2)
-        )
-        .is_ok()
+        map.insert(PageRange::from_aligned(second, PAGE_SIZE).unwrap(), run(2))
+            .is_ok()
     );
 
     assert_eq!(
-        remove(
-            &map,
-            PageRange::from_aligned(first, PAGE_SIZE).unwrap(),
-            run(1),
-        ),
+        map.remove(PageRange::from_aligned(first, PAGE_SIZE).unwrap(), run(1),),
         Ok(())
     );
 
@@ -254,36 +217,20 @@ fn page_map_remove_range_preserves_neighboring_page() {
     let third = mapping.ptr_at(PAGE_SIZE * 2);
 
     assert!(
-        insert(
-            &map,
-            PageRange::from_aligned(first, PAGE_SIZE).unwrap(),
-            run(1)
-        )
-        .is_ok()
+        map.insert(PageRange::from_aligned(first, PAGE_SIZE).unwrap(), run(1))
+            .is_ok()
     );
     assert!(
-        insert(
-            &map,
-            PageRange::from_aligned(second, PAGE_SIZE).unwrap(),
-            run(2)
-        )
-        .is_ok()
+        map.insert(PageRange::from_aligned(second, PAGE_SIZE).unwrap(), run(2))
+            .is_ok()
     );
     assert!(
-        insert(
-            &map,
-            PageRange::from_aligned(third, PAGE_SIZE).unwrap(),
-            run(3)
-        )
-        .is_ok()
+        map.insert(PageRange::from_aligned(third, PAGE_SIZE).unwrap(), run(3))
+            .is_ok()
     );
 
     assert_eq!(
-        remove(
-            &map,
-            PageRange::from_aligned(second, PAGE_SIZE).unwrap(),
-            run(2),
-        ),
+        map.remove(PageRange::from_aligned(second, PAGE_SIZE).unwrap(), run(2),),
         Ok(())
     );
 
@@ -298,10 +245,10 @@ fn page_map_remove_range_rejects_wrong_owner_without_clearing() {
     let map = PageMap::new();
     let range = mapping.page_range();
 
-    assert!(insert(&map, range, run(1)).is_ok());
+    assert!(map.insert(range, run(1)).is_ok());
 
     assert_eq!(
-        remove(&map, range, run(2)),
+        map.remove(range, run(2)),
         Err(PageMapError::UnexpectedEntry)
     );
     assert_eq!(map.get(mapping.base()), Some(run(1)));
@@ -315,16 +262,12 @@ fn page_map_remove_range_rejects_missing_entry_without_clearing() {
     let second = mapping.ptr_at(PAGE_SIZE);
 
     assert!(
-        insert(
-            &map,
-            PageRange::from_aligned(first, PAGE_SIZE).unwrap(),
-            run(1)
-        )
-        .is_ok()
+        map.insert(PageRange::from_aligned(first, PAGE_SIZE).unwrap(), run(1))
+            .is_ok()
     );
 
     assert_eq!(
-        remove(&map, mapping.page_range(), run(1)),
+        map.remove(mapping.page_range(), run(1)),
         Err(PageMapError::UnexpectedEntry)
     );
     assert_eq!(map.get(first), Some(run(1)));
@@ -339,24 +282,16 @@ fn page_map_remove_range_rejects_partial_mismatch_without_clearing() {
     let second = mapping.ptr_at(PAGE_SIZE);
 
     assert!(
-        insert(
-            &map,
-            PageRange::from_aligned(first, PAGE_SIZE).unwrap(),
-            run(1)
-        )
-        .is_ok()
+        map.insert(PageRange::from_aligned(first, PAGE_SIZE).unwrap(), run(1))
+            .is_ok()
     );
     assert!(
-        insert(
-            &map,
-            PageRange::from_aligned(second, PAGE_SIZE).unwrap(),
-            run(2)
-        )
-        .is_ok()
+        map.insert(PageRange::from_aligned(second, PAGE_SIZE).unwrap(), run(2))
+            .is_ok()
     );
 
     assert_eq!(
-        remove(&map, mapping.page_range(), run(1)),
+        map.remove(mapping.page_range(), run(1)),
         Err(PageMapError::UnexpectedEntry)
     );
     assert_eq!(map.get(first), Some(run(1)));
@@ -372,16 +307,14 @@ fn page_map_remove_range_rejects_cross_l2_partial_mismatch_without_clearing() {
     let after_boundary = mapping.ptr_at(boundary);
 
     assert!(
-        insert(
-            &map,
+        map.insert(
             PageRange::from_aligned(before_boundary, PAGE_SIZE).unwrap(),
             run(1)
         )
         .is_ok()
     );
     assert!(
-        insert(
-            &map,
+        map.insert(
             PageRange::from_aligned(after_boundary, PAGE_SIZE).unwrap(),
             run(2)
         )
@@ -389,8 +322,7 @@ fn page_map_remove_range_rejects_cross_l2_partial_mismatch_without_clearing() {
     );
 
     assert_eq!(
-        remove(
-            &map,
+        map.remove(
             PageRange::from_aligned(before_boundary, PAGE_SIZE * 2).unwrap(),
             run(1),
         ),
@@ -408,19 +340,14 @@ fn page_map_insert_range_rejects_overlapping_different_run() {
     let second = mapping.ptr_at(PAGE_SIZE);
 
     assert!(
-        insert(
-            &map,
+        map.insert(
             PageRange::from_aligned(mapping.base(), PAGE_SIZE * 2).unwrap(),
             run(11),
         )
         .is_ok()
     );
     assert_eq!(
-        insert(
-            &map,
-            PageRange::from_aligned(second, PAGE_SIZE).unwrap(),
-            run(12)
-        ),
+        map.insert(PageRange::from_aligned(second, PAGE_SIZE).unwrap(), run(12)),
         Err(PageMapError::Overlap)
     );
     assert_eq!(map.get(second), Some(run(11)));
@@ -432,8 +359,8 @@ fn page_map_insert_range_rejects_existing_same_entry() {
     let map = PageMap::new();
     let range = mapping.page_range();
 
-    assert!(insert(&map, range, run(13)).is_ok());
-    assert_eq!(insert(&map, range, run(13)), Err(PageMapError::Overlap));
+    assert!(map.insert(range, run(13)).is_ok());
+    assert_eq!(map.insert(range, run(13)), Err(PageMapError::Overlap));
     assert_eq!(map.get(mapping.base()), Some(run(13)));
 }
 
@@ -446,8 +373,7 @@ fn page_map_overlap_validation_does_not_allocate_empty_l2_tables() {
     let overlap = mapping.ptr_at(pages_to_next_l2 * PAGE_SIZE);
 
     assert!(
-        insert(
-            &map,
+        map.insert(
             PageRange::from_aligned(overlap, PAGE_SIZE).unwrap(),
             run(21)
         )
@@ -456,8 +382,7 @@ fn page_map_overlap_validation_does_not_allocate_empty_l2_tables() {
     assert!(!has_l2_table(&map, mapping.base()));
 
     assert_eq!(
-        insert(
-            &map,
+        map.insert(
             PageRange::from_aligned(mapping.base(), (pages_to_next_l2 + 1) * PAGE_SIZE).unwrap(),
             run(22),
         ),
@@ -486,7 +411,7 @@ fn page_map_insert_range_crosses_l2_boundary() {
     let map = PageMap::new();
     let range = mapping.page_range();
 
-    assert!(insert(&map, range, run(10)).is_ok());
+    assert!(map.insert(range, run(10)).is_ok());
 
     let last = mapping.ptr_at(mapping.len() - 1);
     assert_eq!(map.get(mapping.base()), Some(run(10)));
@@ -502,7 +427,7 @@ fn page_map_insert_extent_range_crosses_l2_boundary() {
     let boundary = mapping.ptr_at(mapping.first_l2_boundary_offset());
     let last = mapping.ptr_at(mapping.len() - 1);
 
-    assert!(insert(&map, range, extent(10)).is_ok());
+    assert!(map.insert(range, extent(10)).is_ok());
 
     assert_eq!(map.get(mapping.base()), Some(extent(10)));
     assert_eq!(map.get(boundary), Some(extent(10)));
@@ -521,8 +446,7 @@ fn page_map_many_single_page_extents_share_one_l2_table_without_exhaustion() {
     for index in 0..EXTENT_COUNT {
         let ptr = mapping.ptr_at(index * PAGE_SIZE);
         assert!(
-            insert(
-                &map,
+            map.insert(
                 PageRange::from_aligned(ptr, PAGE_SIZE).unwrap(),
                 extent(u32::try_from(index).unwrap()),
             )
@@ -558,8 +482,8 @@ fn page_map_remove_range_crosses_l2_boundary() {
     let boundary = mapping.ptr_at(mapping.first_l2_boundary_offset());
     let last = mapping.ptr_at(mapping.len() - 1);
 
-    assert!(insert(&map, range, run(10)).is_ok());
-    assert_eq!(remove(&map, range, run(10)), Ok(()));
+    assert!(map.insert(range, run(10)).is_ok());
+    assert_eq!(map.remove(range, run(10)), Ok(()));
 
     assert!(map.get(mapping.base()).is_none());
     assert!(map.get(boundary).is_none());
