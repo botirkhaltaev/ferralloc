@@ -7,7 +7,7 @@ pub(crate) mod heap;
 use crate::{
     layout::LayoutSpec,
     memory::{AddressRange, Mapping},
-    size_class::{SizeClass, SizeClassId},
+    size_class::{SizeClassId, SizeClasses},
 };
 
 use super::HeapId;
@@ -252,9 +252,9 @@ impl RunFreeStatus {
 }
 
 impl Run {
-    pub(crate) fn new(id: RunId, heap: HeapId, mapping: Mapping, class: SizeClass) -> Self {
+    pub(crate) fn new(id: RunId, heap: HeapId, mapping: Mapping, class: SizeClassId) -> Self {
         let range = mapping.range();
-        let block_size = class.block_size();
+        let block_size = SizeClasses::block_size(class);
         let capacity = range
             .len()
             .checked_div(block_size)
@@ -265,7 +265,7 @@ impl Run {
             heap,
             mapping,
             range,
-            class: class.id(),
+            class,
             block_size,
             block_shift: block_size_shift(block_size),
             capacity,
@@ -529,13 +529,18 @@ const fn block_size_shift(block_size: usize) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
+    use core::alloc::Layout;
+
     use crate::{layout::LayoutSpec, memory::OsMemory, size_class::SizeClasses};
 
     use super::*;
 
-    fn class_for(size: usize, align: usize) -> SizeClass {
-        let spec = LayoutSpec::from_size_align(size, align).unwrap();
-        SizeClasses::class(SizeClasses::id_for(spec).unwrap()).unwrap()
+    fn layout_spec(size: usize, align: usize) -> LayoutSpec {
+        LayoutSpec::from_layout(Layout::from_size_align(size, align).unwrap())
+    }
+
+    fn class_id(size: usize, align: usize) -> SizeClassId {
+        SizeClasses::id_for(layout_spec(size, align)).unwrap()
     }
 
     fn test_heap_id() -> HeapId {
@@ -545,14 +550,14 @@ mod tests {
     #[test]
     fn reusable_run_takes_each_block_once() {
         let mapping = OsMemory::map(RUN_SIZE).unwrap();
-        let class = class_for(64, 8);
+        let class = class_id(64, 8);
         let run = Run::new(
             RunId::from_index(0).unwrap(),
             test_heap_id(),
             mapping,
             class,
         );
-        let capacity = RUN_SIZE / class.block_size();
+        let capacity = RUN_SIZE / SizeClasses::block_size(class);
         let mut seen = vec![false; capacity];
 
         for _ in 0..capacity {
@@ -574,7 +579,7 @@ mod tests {
     #[test]
     fn reusable_run_reuses_returned_block() {
         let mapping = OsMemory::map(RUN_SIZE).unwrap();
-        let class = class_for(128, 8);
+        let class = class_id(128, 8);
         let run = Run::new(
             RunId::from_index(1).unwrap(),
             test_heap_id(),
@@ -596,9 +601,9 @@ mod tests {
             RunId::from_index(7).unwrap(),
             test_heap_id(),
             mapping,
-            class_for(64, 8),
+            class_id(64, 8),
         );
-        let new = LayoutSpec::from_size_align(64, 8).unwrap();
+        let new = layout_spec(64, 8);
         let ptr = run.allocate().unwrap();
 
         assert_eq!(run.resize_in_place(ptr, new), Ok(true));
@@ -611,9 +616,9 @@ mod tests {
             RunId::from_index(8).unwrap(),
             test_heap_id(),
             mapping,
-            class_for(64, 8),
+            class_id(64, 8),
         );
-        let new = LayoutSpec::from_size_align(80, 8).unwrap();
+        let new = layout_spec(80, 8);
         let ptr = run.allocate().unwrap();
 
         assert_eq!(run.resize_in_place(ptr, new), Ok(false));
@@ -622,7 +627,7 @@ mod tests {
     #[test]
     fn reusable_run_rejects_interior_pointer() {
         let mapping = OsMemory::map(RUN_SIZE).unwrap();
-        let class = class_for(64, 8);
+        let class = class_id(64, 8);
         let run = Run::new(
             RunId::from_index(2).unwrap(),
             test_heap_id(),
@@ -638,7 +643,7 @@ mod tests {
     #[test]
     fn reusable_run_rejects_interior_pointer_for_non_power_of_two_class() {
         let mapping = OsMemory::map(RUN_SIZE).unwrap();
-        let class = class_for(24, 8);
+        let class = class_id(24, 8);
         let run = Run::new(
             RunId::from_index(2).unwrap(),
             test_heap_id(),
@@ -655,7 +660,7 @@ mod tests {
     #[test]
     fn reusable_run_reports_double_free() {
         let mapping = OsMemory::map(RUN_SIZE).unwrap();
-        let class = class_for(64, 8);
+        let class = class_id(64, 8);
         let run = Run::new(
             RunId::from_index(7).unwrap(),
             test_heap_id(),
@@ -671,7 +676,7 @@ mod tests {
     #[test]
     fn remote_pending_run_reports_duplicate_remote_free() {
         let mapping = OsMemory::map(RUN_SIZE).unwrap();
-        let class = class_for(64, 8);
+        let class = class_id(64, 8);
         let run = Run::new(
             RunId::from_index(9).unwrap(),
             test_heap_id(),
@@ -687,7 +692,7 @@ mod tests {
     #[test]
     fn remote_pending_run_unclaim_restores_allocated() {
         let mapping = OsMemory::map(RUN_SIZE).unwrap();
-        let class = class_for(64, 8);
+        let class = class_id(64, 8);
         let run = Run::new(
             RunId::from_index(12).unwrap(),
             test_heap_id(),
@@ -704,7 +709,7 @@ mod tests {
     #[test]
     fn remote_pending_run_reports_local_free_as_double_free() {
         let mapping = OsMemory::map(RUN_SIZE).unwrap();
-        let class = class_for(64, 8);
+        let class = class_id(64, 8);
         let run = Run::new(
             RunId::from_index(10).unwrap(),
             test_heap_id(),
@@ -720,7 +725,7 @@ mod tests {
     #[test]
     fn remote_pending_run_completes_to_reusable() {
         let mapping = OsMemory::map(RUN_SIZE).unwrap();
-        let class = class_for(64, 8);
+        let class = class_id(64, 8);
         let run = Run::new(
             RunId::from_index(11).unwrap(),
             test_heap_id(),
@@ -737,7 +742,7 @@ mod tests {
     #[test]
     fn reusable_run_rejects_never_allocated_block_as_double_free() {
         let mapping = OsMemory::map(RUN_SIZE).unwrap();
-        let class = class_for(64, 8);
+        let class = class_id(64, 8);
         let run = Run::new(
             RunId::from_index(8).unwrap(),
             test_heap_id(),
@@ -754,14 +759,14 @@ mod tests {
     #[test]
     fn reusable_run_returns_aligned_blocks_for_alignment_sensitive_layout() {
         let mapping = OsMemory::map(RUN_SIZE).unwrap();
-        let class = class_for(17, 16);
+        let class = class_id(17, 16);
         let run = Run::new(
             RunId::from_index(3).unwrap(),
             test_heap_id(),
             mapping,
             class,
         );
-        let capacity = RUN_SIZE / class.block_size();
+        let capacity = RUN_SIZE / SizeClasses::block_size(class);
 
         for _ in 0..capacity {
             let ptr = run.allocate().unwrap();
@@ -777,7 +782,7 @@ mod tests {
             RunId::from_index(5).unwrap(),
             test_heap_id(),
             mapping,
-            class_for(8, 8),
+            class_id(8, 8),
         );
 
         assert_eq!(run.range().base(), range.base());

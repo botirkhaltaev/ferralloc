@@ -21,13 +21,6 @@ impl LayoutSpec {
         Self { size, align }
     }
 
-    #[cfg(test)]
-    pub(crate) fn from_size_align(size: usize, align: usize) -> Option<Self> {
-        Layout::from_size_align(size, align)
-            .ok()
-            .map(Self::from_layout)
-    }
-
     pub(crate) const fn size(self) -> usize {
         self.size
     }
@@ -56,10 +49,10 @@ impl LayoutSpec {
     /// to be rounded up to `align`.
     ///
     /// Worst-case alignment padding is `align - 1` bytes (base one past an
-    /// aligned address). This uses the conservative `size + align` bound —
-    /// one byte more than necessary — before rounding up to `page_size`.
+    /// aligned address), so the mapping needs `size + align - 1` bytes before
+    /// rounding up to `page_size`.
     pub(crate) fn mapping_len(self, page_size: usize) -> Option<usize> {
-        let size_with_align_headroom = self.size.checked_add(self.align.get())?;
+        let size_with_align_headroom = self.size.checked_add(self.align.get() - 1)?;
         let mask = page_size.checked_sub(1)?;
         size_with_align_headroom
             .checked_add(mask)
@@ -73,6 +66,10 @@ mod tests {
 
     use super::*;
 
+    fn layout_spec(size: usize, align: usize) -> LayoutSpec {
+        LayoutSpec::from_layout(Layout::from_size_align(size, align).unwrap())
+    }
+
     #[test]
     fn layout_spec_normalizes_zero_size_to_one() {
         let layout = Layout::from_size_align(0, 8).unwrap();
@@ -83,35 +80,35 @@ mod tests {
 
     #[test]
     fn layout_spec_preserves_alignment() {
-        let spec = LayoutSpec::from_size_align(32, 64).unwrap();
+        let spec = layout_spec(32, 64);
 
         assert_eq!(spec.align(), 64);
     }
 
     #[test]
     fn layout_spec_minimum_block_size_is_max_size_or_align() {
-        let spec = LayoutSpec::from_size_align(17, 64).unwrap();
+        let spec = layout_spec(17, 64);
 
         assert_eq!(spec.minimum_block_size(), 64);
     }
 
     #[test]
     fn layout_spec_align_addr_rounds_up() {
-        let spec = LayoutSpec::from_size_align(1, 16).unwrap();
+        let spec = layout_spec(1, 16);
 
         assert_eq!(spec.align_addr(17), Some(32));
     }
 
     #[test]
     fn layout_spec_align_addr_keeps_aligned_addr() {
-        let spec = LayoutSpec::from_size_align(1, 16).unwrap();
+        let spec = layout_spec(1, 16);
 
         assert_eq!(spec.align_addr(32), Some(32));
     }
 
     #[test]
     fn layout_spec_detects_aligned_address() {
-        let spec = LayoutSpec::from_size_align(1, 16).unwrap();
+        let spec = layout_spec(1, 16);
 
         assert!(spec.is_addr_aligned(32));
         assert!(!spec.is_addr_aligned(33));
@@ -119,16 +116,32 @@ mod tests {
 
     #[test]
     fn layout_spec_align_addr_detects_overflow() {
-        let spec = LayoutSpec::from_size_align(1, 16).unwrap();
+        let spec = layout_spec(1, 16);
 
         assert_eq!(spec.align_addr(usize::MAX), None);
     }
 
     #[test]
     fn layout_spec_mapping_len_rounds_to_page() {
-        let spec = LayoutSpec::from_size_align(4097, 8).unwrap();
+        let spec = layout_spec(4097, 8);
 
         assert_eq!(spec.mapping_len(4096), Some(8192));
+    }
+
+    #[test]
+    fn layout_spec_mapping_len_uses_align_minus_one_headroom() {
+        // size + align would round past one page; size + align - 1 stays exact.
+        let spec = layout_spec(4089, 8);
+
+        assert_eq!(spec.mapping_len(4096), Some(4096));
+        assert_eq!(
+            4089usize.checked_add(8).map(|v| (v + 4095) & !4095),
+            Some(8192)
+        );
+        assert_eq!(
+            4089usize.checked_add(8 - 1).map(|v| (v + 4095) & !4095),
+            Some(4096)
+        );
     }
 
     #[test]

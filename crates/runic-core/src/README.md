@@ -8,9 +8,9 @@ Allocator core organized around entities and invariants.
 - `arena`: fixed-capacity freelist object table for heap/run/extent metadata.
 - `config`: allocator and extent retention/reuse configuration.
 - `heap`: owner-local heaps, run/extent heaps, heap table, and thread binding.
-- `layout`: normalized layout semantics and mapping sizing.
+- `layout`: normalized layout semantics and mapping sizing (`align` as `NonZeroUsize`; `mapping_len` uses `size + align - 1`).
 - `memory`: address ranges, mmap ownership, and page-indexed owner lookup.
-- `size_class`: size-class selection; alignment remaps search the single hand-authored `SIZES` table (no parallel align table).
+- `size_class`: size-class selection; `SIZES` is the only hand-authored table and the align remap is const-generated from it. `SizeClassId` is a bounded index minted only by `SizeClasses`.
 
 ## Invariant
 
