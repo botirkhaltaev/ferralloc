@@ -206,11 +206,15 @@ impl Extent {
 
 #[cfg(test)]
 mod tests {
-    use core::num::NonZeroU32;
+    use core::{alloc::Layout, num::NonZeroU32};
 
     use crate::{layout::LayoutSpec, memory::OsMemory};
 
     use super::*;
+
+    fn layout_spec(size: usize, align: usize) -> LayoutSpec {
+        LayoutSpec::from_layout(Layout::from_size_align(size, align).unwrap())
+    }
 
     fn test_heap_id() -> HeapId {
         HeapId::new(0, NonZeroU32::MIN).unwrap()
@@ -218,7 +222,7 @@ mod tests {
 
     #[test]
     fn extent_aligns_user_pointer_inside_mapping() {
-        let spec = LayoutSpec::from_size_align(128 * 1024, 4096).unwrap();
+        let spec = layout_spec(128 * 1024, 4096);
         let mapping = OsMemory::map(spec.mapping_len(OsMemory::page_size()).unwrap()).unwrap();
         let mapping_range = mapping.range();
         let extent = Extent::new(
@@ -236,7 +240,7 @@ mod tests {
 
     #[test]
     fn extent_rejects_interior_pointer() {
-        let spec = LayoutSpec::from_size_align(128 * 1024, 4096).unwrap();
+        let spec = layout_spec(128 * 1024, 4096);
         let mapping = OsMemory::map(spec.mapping_len(OsMemory::page_size()).unwrap()).unwrap();
         let extent = Extent::new(
             ExtentId::from_index(1).unwrap(),
@@ -254,7 +258,7 @@ mod tests {
 
     #[test]
     fn extent_accepts_exact_pointer() {
-        let spec = LayoutSpec::from_size_align(128 * 1024, 4096).unwrap();
+        let spec = layout_spec(128 * 1024, 4096);
         let mapping = OsMemory::map(spec.mapping_len(OsMemory::page_size()).unwrap()).unwrap();
         let extent = Extent::new(
             ExtentId::from_index(2).unwrap(),
@@ -270,7 +274,7 @@ mod tests {
 
     #[test]
     fn extent_unclaim_restores_allocated() {
-        let spec = LayoutSpec::from_size_align(128 * 1024, 4096).unwrap();
+        let spec = layout_spec(128 * 1024, 4096);
         let mapping = OsMemory::map(spec.mapping_len(OsMemory::page_size()).unwrap()).unwrap();
         let extent = Extent::new(
             ExtentId::from_index(7).unwrap(),
@@ -287,7 +291,7 @@ mod tests {
 
     #[test]
     fn extent_resizes_in_place_for_smaller_layout() {
-        let spec = LayoutSpec::from_size_align(128 * 1024, 4096).unwrap();
+        let spec = layout_spec(128 * 1024, 4096);
         let mapping = OsMemory::map(spec.mapping_len(OsMemory::page_size()).unwrap()).unwrap();
         let mut extent = Extent::new(
             ExtentId::from_index(3).unwrap(),
@@ -296,14 +300,14 @@ mod tests {
             spec,
         )
         .unwrap();
-        let smaller = LayoutSpec::from_size_align(64 * 1024, 4096).unwrap();
+        let smaller = layout_spec(64 * 1024, 4096);
 
         assert_eq!(extent.resize_in_place(extent.ptr(), smaller), Ok(true));
     }
 
     #[test]
     fn extent_does_not_resize_in_place_beyond_mapping() {
-        let spec = LayoutSpec::from_size_align(128 * 1024, 4096).unwrap();
+        let spec = layout_spec(128 * 1024, 4096);
         let mapping = OsMemory::map(spec.mapping_len(OsMemory::page_size()).unwrap()).unwrap();
         let mut extent = Extent::new(
             ExtentId::from_index(4).unwrap(),
@@ -312,14 +316,14 @@ mod tests {
             spec,
         )
         .unwrap();
-        let larger = LayoutSpec::from_size_align(256 * 1024, 4096).unwrap();
+        let larger = layout_spec(256 * 1024, 4096);
 
         assert_eq!(extent.resize_in_place(extent.ptr(), larger), Ok(false));
     }
 
     #[test]
     fn extent_grows_in_place_within_larger_mapping() {
-        let spec = LayoutSpec::from_size_align(128 * 1024, 4096).unwrap();
+        let spec = layout_spec(128 * 1024, 4096);
         let mapping = OsMemory::map(512 * 1024).unwrap();
         let mut extent = Extent::new(
             ExtentId::from_index(5).unwrap(),
@@ -328,7 +332,7 @@ mod tests {
             spec,
         )
         .unwrap();
-        let larger = LayoutSpec::from_size_align(256 * 1024, 4096).unwrap();
+        let larger = layout_spec(256 * 1024, 4096);
 
         assert_eq!(extent.resize_in_place(extent.ptr(), larger), Ok(true));
         assert_eq!(extent.range.len(), 256 * 1024);
@@ -336,7 +340,7 @@ mod tests {
 
     #[test]
     fn extent_grows_in_place_when_page_range_does_not_change() {
-        let spec = LayoutSpec::from_size_align(4095, 8).unwrap();
+        let spec = layout_spec(4095, 8);
         let mapping = OsMemory::map(spec.mapping_len(OsMemory::page_size()).unwrap()).unwrap();
         let mut extent = Extent::new(
             ExtentId::from_index(6).unwrap(),
@@ -345,7 +349,7 @@ mod tests {
             spec,
         )
         .unwrap();
-        let larger = LayoutSpec::from_size_align(4096, 8).unwrap();
+        let larger = layout_spec(4096, 8);
 
         assert_eq!(extent.resize_in_place(extent.ptr(), larger), Ok(true));
         assert_eq!(extent.range.len(), 4096);

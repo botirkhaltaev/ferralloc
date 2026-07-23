@@ -213,9 +213,7 @@ impl ExtentHeap {
 
 #[cfg(test)]
 mod tests {
-    use core::ptr::write_bytes;
-
-    use core::num::NonZeroU32;
+    use core::{alloc::Layout, num::NonZeroU32, ptr::write_bytes};
 
     use crate::{
         heap::{Extent, HeapId, extent::ExtentId},
@@ -225,8 +223,12 @@ mod tests {
 
     use super::*;
 
+    fn layout_spec(size: usize, align: usize) -> LayoutSpec {
+        LayoutSpec::from_layout(Layout::from_size_align(size, align).unwrap())
+    }
+
     fn reusable_extent(id: ExtentId) -> Extent {
-        let spec = LayoutSpec::from_size_align(65_536, 8).unwrap();
+        let spec = layout_spec(65_536, 8);
         let len = spec.mapping_len(OsMemory::page_size()).unwrap();
         let mapping = OsMemory::map(len).unwrap();
 
@@ -254,7 +256,7 @@ mod tests {
     fn zeroed_allocate_clears_cached_mapping() {
         let mut heap = ExtentHeap::new(4, ExtentConfig::new());
         let pages = PageMap::new();
-        let spec = LayoutSpec::from_size_align(128 * 1024, 4096).unwrap();
+        let spec = layout_spec(128 * 1024, 4096);
         let size = 128 * 1024;
         let heap_id = HeapId::new(0, NonZeroU32::MIN).unwrap();
 
@@ -290,7 +292,7 @@ mod tests {
     fn uninit_allocate_preserves_cached_bytes() {
         let mut heap = ExtentHeap::new(4, ExtentConfig::new());
         let pages = PageMap::new();
-        let spec = LayoutSpec::from_size_align(128 * 1024, 4096).unwrap();
+        let spec = layout_spec(128 * 1024, 4096);
         let size = 128 * 1024;
         let heap_id = HeapId::new(0, NonZeroU32::MIN).unwrap();
 

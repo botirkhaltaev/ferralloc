@@ -61,7 +61,6 @@ impl RunHeap {
         heap_id: HeapId,
         pages: &PageMap,
     ) -> Option<NonNull<Run>> {
-        let class = SizeClasses::class(class)?;
         let mapping = OsMemory::map(RUN_SIZE)?;
         let index = self.runs.claim()?;
         let Some(id) = RunId::from_index(u32::try_from(index).ok()?) else {
@@ -237,6 +236,8 @@ impl From<RunError> for RunHeapError {
 
 #[cfg(test)]
 mod tests {
+    use core::alloc::Layout;
+
     use crate::{
         heap::{HeapId, RUN_SIZE, Run, RunId},
         layout::LayoutSpec,
@@ -246,10 +247,17 @@ mod tests {
 
     use super::*;
 
+    fn layout_spec(size: usize, align: usize) -> LayoutSpec {
+        LayoutSpec::from_layout(Layout::from_size_align(size, align).unwrap())
+    }
+
+    fn class_id(size: usize, align: usize) -> SizeClassId {
+        SizeClasses::id_for(layout_spec(size, align)).unwrap()
+    }
+
     fn reusable_run(id: RunId) -> Run {
         let mapping = OsMemory::map(RUN_SIZE).unwrap();
-        let spec = LayoutSpec::from_size_align(64, 8).unwrap();
-        let class = SizeClasses::for_layout(spec).unwrap();
+        let class = class_id(64, 8);
         let heap = HeapId::new(0, core::num::NonZeroU32::MIN).unwrap();
 
         Run::new(id, heap, mapping, class)
@@ -282,11 +290,10 @@ mod tests {
     fn run_heap_relinks_previously_full_run_after_free() {
         let mut allocator = RunHeap::new(2);
         let pages = PageMap::new();
-        let spec = LayoutSpec::from_size_align(64, 8).unwrap();
-        let class = SizeClasses::for_layout(spec).unwrap();
-        let class_index = class.id().index();
-        let capacity = RUN_SIZE / class.block_size();
-        let (_run, first) = allocate_block(&mut allocator, class.id(), &pages).unwrap();
+        let class = class_id(64, 8);
+        let class_index = class.index();
+        let capacity = RUN_SIZE / SizeClasses::block_size(class);
+        let (_run, first) = allocate_block(&mut allocator, class, &pages).unwrap();
         let PageOwner::Run(run_ptr) = pages.get(first).unwrap() else {
             panic!("small allocation should publish a run entry");
         };
@@ -294,14 +301,14 @@ mod tests {
         let id = unsafe { run_ptr.as_ref().id() };
 
         for _ in 1..capacity {
-            assert!(allocate_block(&mut allocator, class.id(), &pages).is_some());
+            assert!(allocate_block(&mut allocator, class, &pages).is_some());
         }
 
         assert_eq!(available_run_id(&allocator, class_index), None);
         assert_eq!(allocator.free(run_ptr, first), Ok(()));
         assert_eq!(available_run_id(&allocator, class_index), Some(id));
 
-        let (_run, reused) = allocate_block(&mut allocator, class.id(), &pages).unwrap();
+        let (_run, reused) = allocate_block(&mut allocator, class, &pages).unwrap();
 
         assert_eq!(reused, first);
         assert_eq!(available_run_id(&allocator, class_index), None);
@@ -329,12 +336,11 @@ mod tests {
     fn rebind_heap_id_rebinds_runs_off_the_available_list() {
         let mut allocator = RunHeap::new(2);
         let pages = PageMap::new();
-        let spec = LayoutSpec::from_size_align(64, 8).unwrap();
-        let class = SizeClasses::for_layout(spec).unwrap();
+        let class = class_id(64, 8);
         let old = HeapId::new(0, core::num::NonZeroU32::MIN).unwrap();
         let new = HeapId::new(0, core::num::NonZeroU32::new(2).unwrap()).unwrap();
 
-        let run = allocator.allocate(class.id(), old, &pages).unwrap();
+        let run = allocator.allocate(class, old, &pages).unwrap();
         // Leave the run checked out (sticky-style): never return_available.
         // SAFETY: run came from this heap's live arena.
         assert_eq!(unsafe { run.as_ref() }.heap_id(), old);
