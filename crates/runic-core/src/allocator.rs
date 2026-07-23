@@ -1,5 +1,6 @@
 use core::{
     alloc::Layout,
+    mem::ManuallyDrop,
     ptr::{NonNull, copy_nonoverlapping, null_mut, write_bytes},
     sync::atomic::{AtomicPtr, AtomicU32, Ordering},
 };
@@ -24,15 +25,27 @@ pub struct Allocator {
 }
 
 /// Refcounted mmap instance for one Allocator. Not a domain entity.
+///
+/// Self-hosted: the value lives inside the mmap owned by `storage`. [`Drop`]
+/// tears down `pages` then `table` before `storage` munmaps that region.
 pub(crate) struct AllocatorInner {
     refs: AtomicU32,
-    pages: PageMap,
-    pub(crate) table: Mutex<HeapTable>,
-    /// Self-hosted backing storage: this `AllocatorInner` value lives inside the
-    /// mmap region this `Mapping` owns. Never read directly; held only so its
-    /// `Drop` (munmap) runs when this value is dropped. Declared last so it
-    /// drops only after every other field has released its own resources.
-    _storage: Mapping,
+    pages: ManuallyDrop<PageMap>,
+    pub(crate) table: ManuallyDrop<Mutex<HeapTable>>,
+    storage: ManuallyDrop<Mapping>,
+}
+
+impl Drop for AllocatorInner {
+    fn drop(&mut self) {
+        // SAFETY: Drop runs once for the final AllocatorInner reference. Order
+        // is pages → table → storage so metadata releases complete before the
+        // self-hosting mmap is unmapped.
+        unsafe {
+            ManuallyDrop::drop(&mut self.pages);
+            ManuallyDrop::drop(&mut self.table);
+            ManuallyDrop::drop(&mut self.storage);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -483,14 +496,13 @@ impl AllocatorInner {
         let inner = storage.base().cast::<Self>();
 
         // SAFETY: inner points to uniquely owned mmap storage aligned at least to a page boundary.
-        // `storage` is moved into the value it backs; its `Drop` unmaps this same region only
-        // after every other field has already been dropped in place (see field order above).
+        // `storage` is moved into the value it backs; [`Drop`] unmaps it only after pages/table.
         unsafe {
             inner.as_ptr().write(Self {
                 refs: AtomicU32::new(1),
-                pages: PageMap::new(),
-                table: Mutex::new(HeapTable::new(config)),
-                _storage: storage,
+                pages: ManuallyDrop::new(PageMap::new()),
+                table: ManuallyDrop::new(Mutex::new(HeapTable::new(config))),
+                storage: ManuallyDrop::new(storage),
             });
         }
 
@@ -542,15 +554,13 @@ impl AllocatorInner {
         }
     }
 
-    pub(crate) const fn pages(&self) -> &PageMap {
+    pub(crate) fn pages(&self) -> &PageMap {
         &self.pages
     }
 
     unsafe fn destroy(inner: NonNull<Self>) {
         // SAFETY: caller guarantees this is the final reference to inner.
-        // Dropping fields in declaration order drops `_storage` last, unmapping this region
-        // only after `pages` and `table` have released their own resources; nothing touches
-        // `inner` afterward.
+        // [`Drop`] drops pages → table → storage; nothing touches `inner` afterward.
         unsafe { inner.as_ptr().drop_in_place() };
     }
 

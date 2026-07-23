@@ -1,21 +1,25 @@
-use core::ptr::NonNull;
+use core::{num::NonZeroUsize, ptr::NonNull};
 
 use crate::memory::AddressRange;
 
 pub(crate) const PAGE_SIZE: usize = 4096;
 
+/// Sole owner of one live anonymous mmap region.
+///
+/// Constructed only by [`OsMemory::map`]. `Drop` munmaps the region. Length is
+/// always nonzero and a multiple of [`PAGE_SIZE`]; base is always page-aligned.
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct Mapping {
     base: NonNull<u8>,
-    len: usize,
+    len: NonZeroUsize,
 }
 
 impl Mapping {
-    /// Constructs a `Mapping` over an mmap allocation.
-    ///
     /// Private: every `Mapping` must describe a live mmap region owned uniquely
     /// by that `Mapping`, so construction is confined to `OsMemory::map`.
-    const fn new(base: NonNull<u8>, len: usize) -> Self {
+    fn new(base: NonNull<u8>, len: NonZeroUsize) -> Self {
+        debug_assert!(base.as_ptr().addr().is_multiple_of(PAGE_SIZE));
+        debug_assert!(len.get().is_multiple_of(PAGE_SIZE));
         Self { base, len }
     }
 
@@ -23,15 +27,19 @@ impl Mapping {
         self.base
     }
 
+    pub(crate) const fn len(&self) -> NonZeroUsize {
+        self.len
+    }
+
     pub(crate) const fn range(&self) -> AddressRange {
-        AddressRange::new(self.base, self.len)
+        AddressRange::new(self.base, self.len.get())
     }
 }
 
 impl Drop for Mapping {
     fn drop(&mut self) {
         // SAFETY: Mapping owns an mmap allocation returned by OsMemory::map.
-        unsafe { libc::munmap(self.base.as_ptr().cast(), self.len) };
+        unsafe { libc::munmap(self.base.as_ptr().cast(), self.len.get()) };
     }
 }
 
@@ -47,12 +55,17 @@ impl OsMemory {
     }
 
     pub(crate) fn map(len: usize) -> Option<Mapping> {
+        if len == 0 {
+            return None;
+        }
+
         let rounded_len = Self::round_to_page(len)?;
+        let rounded_len = NonZeroUsize::new(rounded_len)?;
         // SAFETY: mmap is called with a null hint, anonymous private mapping, and a page-rounded length.
         let ptr = unsafe {
             libc::mmap(
                 core::ptr::null_mut(),
-                rounded_len,
+                rounded_len.get(),
                 libc::PROT_READ | libc::PROT_WRITE,
                 libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
                 -1,
@@ -68,6 +81,10 @@ impl OsMemory {
     }
 
     pub(crate) fn round_to_page(len: usize) -> Option<usize> {
+        if len == 0 {
+            return None;
+        }
+
         let mask = PAGE_SIZE - 1;
         len.checked_add(mask).map(|value| value & !mask)
     }
@@ -93,11 +110,21 @@ mod tests {
     }
 
     #[test]
+    fn os_memory_round_to_page_rejects_zero() {
+        assert_eq!(OsMemory::round_to_page(0), None);
+    }
+
+    #[test]
+    fn os_memory_map_rejects_zero() {
+        assert!(OsMemory::map(0).is_none());
+    }
+
+    #[test]
     fn os_memory_map_returns_page_aligned_mapping() {
         let mapping = OsMemory::map(1).unwrap();
 
         assert_eq!(mapping.base().as_ptr() as usize % PAGE_SIZE, 0);
-        assert_eq!(mapping.range().len(), PAGE_SIZE);
+        assert_eq!(mapping.len().get(), PAGE_SIZE);
 
         drop(mapping);
     }

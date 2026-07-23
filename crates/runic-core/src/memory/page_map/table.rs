@@ -127,7 +127,7 @@ impl L1Entry {
             .l2_table_ref()
             .ok_or(PageMapError::MetadataAllocFailed)?;
 
-        table.assign(segment, value)?;
+        table.write_pages(segment, value)?;
         self.occupied_pages.store(occupied_pages, Ordering::Release);
 
         Ok(())
@@ -141,7 +141,7 @@ impl L1Entry {
             .ok_or(PageMapError::UnexpectedEntry)?;
         let table = self.l2_table_ref().ok_or(PageMapError::UnexpectedEntry)?;
 
-        table.clear_segment(segment)?;
+        table.write_pages(segment, MapEntry::empty())?;
         self.occupied_pages.store(occupied_pages, Ordering::Release);
 
         Ok(())
@@ -170,14 +170,6 @@ impl L2Table {
             .ok_or(PageMapError::InvalidRange)?;
 
         Ok(pages.iter().all(|entry| entry.load() == expected))
-    }
-
-    fn assign(&self, segment: L2Segment, value: MapEntry) -> Result<(), PageMapError> {
-        self.write_pages(segment, value)
-    }
-
-    fn clear_segment(&self, segment: L2Segment) -> Result<(), PageMapError> {
-        self.write_pages(segment, MapEntry::empty())
     }
 
     fn segment_is_free(&self, segment: L2Segment) -> bool {
