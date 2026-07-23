@@ -128,13 +128,13 @@ small-run hits may use thread-owned heap metadata without entering that lock.
 ```text
 RunicAlloc     owns the Rust GlobalAlloc boundary.
 Allocator      owns the core public allocator API and abort boundary.
-AllocatorInner owns the refcounted mmap instance: PageMap and Mutex<HeapTable>.
+AllocatorInner owns the refcounted mmap instance: PageMap, Mutex<HeapTable>, and self-hosting Mapping.
 Heap           owns run and extent allocation policy for one heap identity.
 HeapTable      owns slots Arena<Heap>, generations[], acquire/retire/reclaim, heap/mode, and publish.
 Arena          owns fixed-capacity freelist metadata storage.
 LayoutSpec     owns normalized layout semantics.
 SizeClasses    owns size-class selection.
-OsMemory       owns mmap and munmap.
+OsMemory       maps anonymous pages; Mapping owns the mmap lifecycle (Drop munmaps).
 PageMap        owns page-indexed owner-pointer lookup.
 RunHeap        owns Arena<Run>, small-allocation policy, and available run lists.
 Run            owns fixed-block allocation metadata and per-block state.
@@ -176,7 +176,7 @@ run block uniqueness and boundary checks
 run arena reservation, insertion, mutation, removal
 run cache retention and reuse policy
 extent cache retention, eviction, and reuse policy
-page-map lookup, removal, overlap rejection, L2 boundary crossing, spans
+page-map lookup, removal, overlap rejection, L2 boundary crossing
 small and large allocation paths
 alignment matrices
 alloc_zeroed

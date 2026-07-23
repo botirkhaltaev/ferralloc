@@ -133,8 +133,8 @@ impl Extent {
         Ok(true)
     }
 
-    pub(crate) fn mapping_range(&self) -> AddressRange {
-        self.mapping.range()
+    pub(crate) fn mapping(&self) -> &Mapping {
+        &self.mapping
     }
 
     pub(crate) fn free(&self, ptr: NonNull<u8>) -> Result<(), ExtentError> {

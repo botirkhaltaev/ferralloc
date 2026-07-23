@@ -201,8 +201,6 @@ impl RunHeap {
         run: Run,
         pages: &PageMap,
     ) -> Option<NonNull<Run>> {
-        let range = run.range();
-
         if self.runs.insert(index, run).is_none() {
             self.runs.release(index);
             return None;
@@ -215,7 +213,7 @@ impl RunHeap {
         debug_assert_eq!(inserted_run.id, id);
         let run_ptr = NonNull::from(&mut *inserted_run);
 
-        if pages.publish_run(range, run_ptr).is_err() {
+        if pages.publish_run(inserted_run.mapping(), run_ptr).is_err() {
             let _removed = self.runs.remove(usize::try_from(id.index()).ok()?);
             return None;
         }
@@ -322,14 +320,14 @@ mod tests {
         let id = RunId::from_index(u32::try_from(index).unwrap()).unwrap();
         assert_eq!(usize::try_from(id.index()).unwrap(), index);
         let run = reusable_run(id);
-        let range = run.range();
         let existing = NonNull::dangling();
+        let base = run.range().base();
 
-        pages.publish_run(range, existing).unwrap();
+        pages.publish_run(run.mapping(), existing).unwrap();
 
         assert_eq!(allocator.insert_run(index, id, run, &pages), None);
         assert!(allocator.runs.get_mut(index).is_none());
-        assert_eq!(pages.get(range.base()), Some(PageOwner::Run(existing)));
+        assert_eq!(pages.get(base), Some(PageOwner::Run(existing)));
     }
 
     #[test]

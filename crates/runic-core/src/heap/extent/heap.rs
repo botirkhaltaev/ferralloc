@@ -149,10 +149,9 @@ impl ExtentHeap {
         // SAFETY: PageMap stores only pointers published from this allocator's live arena.
         let extent = unsafe { extent_ptr.as_ref() };
         let id = extent.id();
-        let range = extent.mapping_range();
 
         pages
-            .unpublish_extent(range, extent_ptr)
+            .unpublish_extent(extent.mapping(), extent_ptr)
             .map_err(|_| ExtentHeapError::InvalidMetadata)?;
 
         let index = usize::try_from(id.index()).map_err(|_| ExtentHeapError::InvalidMetadata)?;
@@ -188,8 +187,6 @@ impl ExtentHeap {
         extent: Extent,
         pages: &PageMap,
     ) -> Option<NonNull<Extent>> {
-        let range = extent.mapping_range();
-
         if self.extents.insert(index, extent).is_none() {
             self.extents.release(index);
             return None;
@@ -202,7 +199,10 @@ impl ExtentHeap {
         debug_assert_eq!(inserted_extent.id(), id);
         let extent_ptr = NonNull::from(&mut *inserted_extent);
 
-        if pages.publish_extent(range, extent_ptr).is_err() {
+        if pages
+            .publish_extent(inserted_extent.mapping(), extent_ptr)
+            .is_err()
+        {
             let _removed = self.extents.remove(index);
             return None;
         }
@@ -242,14 +242,14 @@ mod tests {
         let index = allocator.extents.claim().unwrap();
         let id = ExtentId::from_index(u32::try_from(index).unwrap()).unwrap();
         let extent = reusable_extent(id);
-        let range = extent.mapping_range();
         let existing = NonNull::dangling();
+        let base = extent.mapping().range().base();
 
-        pages.publish_extent(range, existing).unwrap();
+        pages.publish_extent(extent.mapping(), existing).unwrap();
 
         assert_eq!(allocator.insert_extent(index, id, extent, &pages), None);
         assert!(allocator.extents.get_mut(index).is_none());
-        assert_eq!(pages.get(range.base()), Some(PageOwner::Extent(existing)));
+        assert_eq!(pages.get(base), Some(PageOwner::Extent(existing)));
     }
 
     #[test]

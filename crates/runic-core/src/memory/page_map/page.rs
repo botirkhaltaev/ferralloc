@@ -1,5 +1,7 @@
 use core::{num::NonZeroU16, ops::Range, ptr::NonNull};
 
+use crate::memory::Mapping;
+
 use super::{ADDRESSABLE_PAGES, L1_ENTRIES, L2_BITS, L2_ENTRIES, PAGE_SHIFT};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -9,9 +11,26 @@ pub(super) struct PageRange {
 }
 
 impl PageRange {
-    pub(super) fn new(base: NonNull<u8>, len: usize) -> Option<Self> {
+    /// Page-map publish unit for a live [`Mapping`].
+    ///
+    /// `Mapping` already guarantees a page-aligned base and page-multiple
+    /// nonzero length, so this is infallible for addressable mappings.
+    pub(super) fn from_mapping(mapping: &Mapping) -> Option<Self> {
+        Self::from_aligned(mapping.base(), mapping.len().get())
+    }
+
+    /// Page-aligned base and page-multiple nonzero length only.
+    pub(super) fn from_aligned(base: NonNull<u8>, len: usize) -> Option<Self> {
+        let page_size = 1 << PAGE_SHIFT;
+        if !base.as_ptr().addr().is_multiple_of(page_size) {
+            return None;
+        }
+        if len == 0 || !len.is_multiple_of(page_size) {
+            return None;
+        }
+
         let first = Page::containing(base);
-        let end_addr = base.as_ptr().addr().checked_add(len.checked_sub(1)?)?;
+        let end_addr = base.as_ptr().addr().checked_add(len - 1)?;
         let end = Page {
             number: (end_addr >> PAGE_SHIFT).checked_add(1)?,
         };
@@ -84,10 +103,6 @@ impl L2Segment {
         let end = start + self.pages.get();
 
         start..end
-    }
-
-    pub(super) fn contains(self, index: L2Index) -> bool {
-        self.range().contains(&index.get())
     }
 
     pub(super) fn pages(self) -> u32 {

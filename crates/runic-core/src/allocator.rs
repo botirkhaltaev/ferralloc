@@ -1,5 +1,6 @@
 use core::{
     alloc::Layout,
+    mem::ManuallyDrop,
     ptr::{NonNull, copy_nonoverlapping, null_mut, write_bytes},
     sync::atomic::{AtomicPtr, AtomicU32, Ordering},
 };
@@ -14,7 +15,7 @@ use crate::{
         Run, RunError, RunHeap, RunHeapError, THREAD_HEAP,
     },
     layout::LayoutSpec,
-    memory::{OsMemory, PageMap, PageOwner},
+    memory::{Mapping, OsMemory, PageMap, PageOwner},
     size_class::SizeClasses,
 };
 
@@ -24,10 +25,27 @@ pub struct Allocator {
 }
 
 /// Refcounted mmap instance for one Allocator. Not a domain entity.
+///
+/// Self-hosted: the value lives inside the mmap owned by `storage`. [`Drop`]
+/// tears down `pages` then `table` before `storage` munmaps that region.
 pub(crate) struct AllocatorInner {
     refs: AtomicU32,
-    pages: PageMap,
-    pub(crate) table: Mutex<HeapTable>,
+    pages: ManuallyDrop<PageMap>,
+    pub(crate) table: ManuallyDrop<Mutex<HeapTable>>,
+    storage: ManuallyDrop<Mapping>,
+}
+
+impl Drop for AllocatorInner {
+    fn drop(&mut self) {
+        // SAFETY: Drop runs once for the final AllocatorInner reference. Order
+        // is pages → table → storage so metadata releases complete before the
+        // self-hosting mmap is unmapped.
+        unsafe {
+            ManuallyDrop::drop(&mut self.pages);
+            ManuallyDrop::drop(&mut self.table);
+            ManuallyDrop::drop(&mut self.storage);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -474,16 +492,17 @@ impl Allocator {
 
 impl AllocatorInner {
     fn new(config: AllocatorConfig) -> Option<NonNull<Self>> {
-        let mapping = OsMemory::map(core::mem::size_of::<Self>())?;
-        let inner = mapping.base().cast::<Self>();
-        core::mem::forget(mapping);
+        let storage = OsMemory::map(core::mem::size_of::<Self>())?;
+        let inner = storage.base().cast::<Self>();
 
         // SAFETY: inner points to uniquely owned mmap storage aligned at least to a page boundary.
+        // `storage` is moved into the value it backs; [`Drop`] unmaps it only after pages/table.
         unsafe {
             inner.as_ptr().write(Self {
                 refs: AtomicU32::new(1),
-                pages: PageMap::new(),
-                table: Mutex::new(HeapTable::new(config)),
+                pages: ManuallyDrop::new(PageMap::new()),
+                table: ManuallyDrop::new(Mutex::new(HeapTable::new(config))),
+                storage: ManuallyDrop::new(storage),
             });
         }
 
@@ -535,18 +554,14 @@ impl AllocatorInner {
         }
     }
 
-    pub(crate) const fn pages(&self) -> &PageMap {
+    pub(crate) fn pages(&self) -> &PageMap {
         &self.pages
     }
 
     unsafe fn destroy(inner: NonNull<Self>) {
-        let Some(mapping_len) = OsMemory::round_to_page(core::mem::size_of::<Self>()) else {
-            Self::abort();
-        };
         // SAFETY: caller guarantees this is the final reference to inner.
+        // [`Drop`] drops pages → table → storage; nothing touches `inner` afterward.
         unsafe { inner.as_ptr().drop_in_place() };
-        // SAFETY: storage was allocated by OsMemory::map and is no longer occupied by AllocatorInner.
-        unsafe { OsMemory::unmap(inner.cast::<u8>(), mapping_len) };
     }
 
     #[cold]

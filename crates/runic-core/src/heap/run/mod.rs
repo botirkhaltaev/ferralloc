@@ -221,7 +221,6 @@ pub(crate) struct Run {
     id: RunId,
     heap: HeapId,
     mapping: Mapping,
-    range: AddressRange,
     class: SizeClassId,
     block_size: usize,
     block_shift: Option<u32>,
@@ -253,9 +252,9 @@ impl RunFreeStatus {
 
 impl Run {
     pub(crate) fn new(id: RunId, heap: HeapId, mapping: Mapping, class: SizeClassId) -> Self {
-        let range = mapping.range();
         let block_size = SizeClasses::block_size(class);
-        let capacity = range
+        let capacity = mapping
+            .range()
             .len()
             .checked_div(block_size)
             .unwrap_or(0)
@@ -264,7 +263,6 @@ impl Run {
             id,
             heap,
             mapping,
-            range,
             class,
             block_size,
             block_shift: block_size_shift(block_size),
@@ -306,10 +304,12 @@ impl Run {
         unsafe { &mut *self.state.get() }.available_next.take()
     }
 
-    pub(crate) fn range(&self) -> AddressRange {
-        debug_assert!(self.mapping.range().contains(self.range));
+    pub(crate) fn mapping(&self) -> &Mapping {
+        &self.mapping
+    }
 
-        self.range
+    pub(crate) fn range(&self) -> AddressRange {
+        self.mapping.range()
     }
 
     pub(crate) fn allocate(&self) -> Option<NonNull<u8>> {
@@ -436,7 +436,7 @@ impl Run {
     }
 
     pub(crate) fn block_at(&self, ptr: NonNull<u8>) -> Option<RunBlock> {
-        let offset = self.range.offset_of(ptr)?;
+        let offset = self.range().offset_of(ptr)?;
         let index = self.block_index(offset)?;
 
         if index >= self.capacity {
@@ -451,7 +451,7 @@ impl Run {
             return None;
         }
 
-        RunBlock::at_offset(index, self.range.base(), self.block_size).map(RunBlock::ptr)
+        RunBlock::at_offset(index, self.range().base(), self.block_size).map(RunBlock::ptr)
     }
 
     fn block_index(&self, offset: usize) -> Option<usize> {
