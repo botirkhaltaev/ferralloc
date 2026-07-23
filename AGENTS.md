@@ -26,6 +26,7 @@
 - Keep exactly one claim → batch → `HeapTable::publish` → flush remote-free protocol; do not grow a second, parallel remote-free implementation alongside it (e.g. an unbatched or lock-scoped shortcut) for `realloc`, tests, or any other caller. `publish` must complete retained batches against `Draining` heaps (late frees after owner exit), not only `Active` inbox enqueue.
 - Do not model small or large allocation ownership as a shared/root heap; every run and extent is stamped with a `HeapId`, and sharing uses remote-free coordination or backend reuse.
 - Treat caches as allocator-domain ownership structures, not benchmark-specific shortcuts.
+- Do not deepen the extent path into a lock-only design; same-thread extent allocate/free must flow through owner-local `ThreadHeap`/`Heap` state, mirroring the run frontend, and only fall back to the table mutex on TLS miss or cross-thread routing.
 - After code or API changes, revamp nearest subtree `AGENTS.md` files so rules match the new architecture; rewrite or delete stale bullets.
 - Update nearest subtree `README.md` files when module layout, APIs, or invariants they describe changed.
 

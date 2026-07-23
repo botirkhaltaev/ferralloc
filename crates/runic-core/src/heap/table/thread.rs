@@ -6,7 +6,8 @@ use core::{
 
 use crate::{
     allocator::AllocatorInner,
-    heap::{Heap, HeapId, HeapTable, Run, RunHeapError},
+    heap::{Extent, ExtentInit, Heap, HeapId, HeapTable, Run, RunHeapError},
+    layout::LayoutSpec,
     memory::PageMap,
     size_class::{SizeClassId, SizeClasses},
 };
@@ -154,6 +155,25 @@ impl ThreadHeap {
         self.alloc_cached(class, heap)
     }
 
+    /// Owner-local large allocation via the bound heap (no sticky extent cache).
+    ///
+    /// Returns `None` when this thread is not bound to `inner` (caller should `bind`).
+    pub(crate) fn alloc_extent(
+        &self,
+        inner: NonNull<AllocatorInner>,
+        spec: LayoutSpec,
+        pages: &PageMap,
+        init: ExtentInit,
+    ) -> Option<NonNull<u8>> {
+        if !self.matches(inner) {
+            return None;
+        }
+
+        let mut heap = self.bound_heap();
+        // SAFETY: heap is bound only while this TLS entry retains the allocator inner.
+        unsafe { heap.as_mut() }.allocate_extent(spec, pages, init)
+    }
+
     /// Owner-local free for a run owned by the bound heap.
     ///
     /// Returns `Ok(false)` when unbound or bound to a different heap (slow path).
@@ -187,6 +207,31 @@ impl ThreadHeap {
         // SAFETY: this TLS thread is the Active owner of the bound heap; pages outlive the free.
         unsafe { bound.as_mut() }.free_run_owner(
             run,
+            ptr,
+            // SAFETY: inner is retained by this TLS entry while bound.
+            unsafe { inner.as_ref().pages() },
+        )?;
+        Ok(true)
+    }
+
+    /// Owner-local free for an extent owned by the bound heap.
+    ///
+    /// Returns `Ok(false)` when unbound or bound to a different heap (slow path).
+    pub(crate) fn free_extent(
+        &self,
+        inner: NonNull<AllocatorInner>,
+        heap: HeapId,
+        extent: NonNull<Extent>,
+        ptr: NonNull<u8>,
+    ) -> Result<bool, HeapError> {
+        if !self.matches(inner) || self.heap_id.get() != Some(heap) {
+            return Ok(false);
+        }
+
+        let mut bound = self.bound_heap();
+        // SAFETY: this TLS thread is the Active owner of the bound heap; pages outlive the free.
+        unsafe { bound.as_mut() }.free_extent_owner(
+            extent,
             ptr,
             // SAFETY: inner is retained by this TLS entry while bound.
             unsafe { inner.as_ref().pages() },

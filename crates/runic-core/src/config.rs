@@ -24,12 +24,6 @@ impl AllocatorConfig {
     }
 
     #[must_use]
-    pub const fn with_extent_reuse(mut self, reuse: ExtentReuse) -> Self {
-        self.extent = self.extent.with_reuse(reuse);
-        self
-    }
-
-    #[must_use]
     pub const fn with_extent_budget(mut self, budget: Budget) -> Self {
         self.extent = self.extent.with_budget(budget);
         self
@@ -46,7 +40,6 @@ impl Default for AllocatorConfig {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ExtentConfig {
     policy: ExtentPolicy,
-    reuse: ExtentReuse,
     budget: Budget,
 }
 
@@ -55,7 +48,6 @@ impl ExtentConfig {
     pub const fn new() -> Self {
         Self {
             policy: ExtentPolicy::Keep,
-            reuse: ExtentReuse::Exact,
             budget: Budget::new(32, 16 * 1024 * 1024),
         }
     }
@@ -66,11 +58,6 @@ impl ExtentConfig {
     }
 
     #[must_use]
-    pub const fn reuse(self) -> ExtentReuse {
-        self.reuse
-    }
-
-    #[must_use]
     pub const fn budget(self) -> Budget {
         self.budget
     }
@@ -78,12 +65,6 @@ impl ExtentConfig {
     #[must_use]
     pub const fn with_policy(mut self, policy: ExtentPolicy) -> Self {
         self.policy = policy;
-        self
-    }
-
-    #[must_use]
-    pub const fn with_reuse(mut self, reuse: ExtentReuse) -> Self {
-        self.reuse = reuse;
         self
     }
 
@@ -127,26 +108,18 @@ impl Budget {
     }
 }
 
-/// Retention and eviction policy for freed dedicated extent mappings.
+/// Retention policy for freed dedicated extent mappings.
 ///
-/// This controls which mappings remain cached after free and which cached
-/// mapping is evicted when space is needed. Allocation-side lookup order is
-/// controlled separately by [`ExtentReuse`].
+/// Allocation-side lookup always reuses a retained mapping with exactly the
+/// requested length; there is no size-bucket or best-fit reuse strategy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExtentPolicy {
-    /// Do not retain freed extent mappings.
+    /// Do not retain freed extent mappings. Useful for tests and benchmarks
+    /// that compare against unretained large-allocation churn.
     Drop,
-    /// Retain only while both slot and byte budget have free capacity.
+    /// Retain a freed mapping only while both slot and byte budget have free
+    /// capacity; otherwise the mapping is released back to the OS. This is
+    /// the measured default: policy-grid benchmarks showed no reliable
+    /// latency win from oldest-first eviction over this fixed-capacity story.
     Keep,
-    /// Evict the oldest retained mapping when capacity is needed.
-    Fifo,
-}
-
-/// Allocation-side lookup strategy for cached extent mappings.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ExtentReuse {
-    /// Reuse only mappings with exactly the requested mapping length.
-    Exact,
-    /// Reuse the smallest retained mapping that can satisfy the request.
-    BestFit,
 }

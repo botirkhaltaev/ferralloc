@@ -5,7 +5,7 @@ use crate::{
     config::ExtentConfig,
     heap::{Extent, HeapId},
     layout::LayoutSpec,
-    memory::{OsMemory, PageMap},
+    memory::{AddressRange, OsMemory, PageMap},
 };
 
 use super::{ExtentError, ExtentId, cache::ExtentCache};
@@ -13,6 +13,13 @@ use super::{ExtentError, ExtentId, cache::ExtentCache};
 pub(crate) struct ExtentHeap {
     extents: Arena<Extent>,
     cache: ExtentCache,
+}
+
+/// Identity captured by free validation and consumed by the shared retire path.
+#[derive(Clone, Copy)]
+struct RetiringExtent {
+    id: ExtentId,
+    range: AddressRange,
 }
 
 /// How a newly allocated extent's bytes should be initialized.
@@ -104,32 +111,8 @@ impl ExtentHeap {
         ptr: NonNull<u8>,
         pages: &PageMap,
     ) -> Result<(), ExtentHeapError> {
-        let (id, range) = {
-            // SAFETY: PageMap stores only pointers published from this allocator's live arena.
-            let extent = unsafe { extent_ptr.as_ref() };
-            extent
-                .validate_remote_pending()
-                .map_err(ExtentHeapError::from)?;
-            extent.validate_free(ptr).map_err(ExtentHeapError::from)?;
-
-            (extent.id(), extent.mapping_range())
-        };
-
-        pages
-            .unpublish_extent(range, extent_ptr)
-            .map_err(|_| ExtentHeapError::InvalidMetadata)?;
-
-        let index = usize::try_from(id.index()).map_err(|_| ExtentHeapError::InvalidMetadata)?;
-        let Some(extent) = self.extents.remove(index) else {
-            return Err(ExtentHeapError::MissingExtent);
-        };
-
-        let mapping = extent.into_mapping();
-        if let Err(mapping) = self.cache.insert(mapping) {
-            drop(mapping);
-        }
-
-        Ok(())
+        let retiring = Self::validate_remote_free(extent_ptr, ptr)?;
+        self.retire(extent_ptr, retiring, pages)
     }
 
     pub(crate) fn free(
@@ -138,22 +121,61 @@ impl ExtentHeap {
         ptr: NonNull<u8>,
         pages: &PageMap,
     ) -> Result<(), ExtentHeapError> {
-        let (id, range) = {
-            // SAFETY: PageMap stores only pointers published from this allocator's live arena.
-            let extent = unsafe { extent_ptr.as_ref() };
+        let retiring = Self::validate_local_free(extent_ptr, ptr)?;
+        self.retire(extent_ptr, retiring, pages)
+    }
 
-            if let Err(error) = extent.free(ptr) {
-                return Err(ExtentHeapError::from(error));
-            }
+    /// Validate a remote-pending free and gather the identity needed to retire it.
+    ///
+    /// The remote-free protocol already transitioned the extent to
+    /// `RemotePending` via `claim_free`; this only confirms that state and the
+    /// exact pointer before the entry is torn down.
+    fn validate_remote_free(
+        extent_ptr: NonNull<Extent>,
+        ptr: NonNull<u8>,
+    ) -> Result<RetiringExtent, ExtentHeapError> {
+        // SAFETY: PageMap stores only pointers published from this allocator's live arena.
+        let extent = unsafe { extent_ptr.as_ref() };
+        extent
+            .validate_remote_pending()
+            .map_err(ExtentHeapError::from)?;
+        extent.validate_free(ptr).map_err(ExtentHeapError::from)?;
 
-            (extent.id(), extent.mapping_range())
-        };
+        Ok(RetiringExtent {
+            id: extent.id(),
+            range: extent.mapping_range(),
+        })
+    }
 
+    /// Validate an owner-local free and gather the identity needed to retire it.
+    fn validate_local_free(
+        extent_ptr: NonNull<Extent>,
+        ptr: NonNull<u8>,
+    ) -> Result<RetiringExtent, ExtentHeapError> {
+        // SAFETY: PageMap stores only pointers published from this allocator's live arena.
+        let extent = unsafe { extent_ptr.as_ref() };
+        extent.free(ptr).map_err(ExtentHeapError::from)?;
+
+        Ok(RetiringExtent {
+            id: extent.id(),
+            range: extent.mapping_range(),
+        })
+    }
+
+    /// One retire path shared by local and remote-completed frees: unpublish the
+    /// page-map entry, remove the arena slot, and offer the mapping to the cache.
+    fn retire(
+        &mut self,
+        extent_ptr: NonNull<Extent>,
+        retiring: RetiringExtent,
+        pages: &PageMap,
+    ) -> Result<(), ExtentHeapError> {
         pages
-            .unpublish_extent(range, extent_ptr)
+            .unpublish_extent(retiring.range, extent_ptr)
             .map_err(|_| ExtentHeapError::InvalidMetadata)?;
 
-        let index = usize::try_from(id.index()).map_err(|_| ExtentHeapError::InvalidMetadata)?;
+        let index =
+            usize::try_from(retiring.id.index()).map_err(|_| ExtentHeapError::InvalidMetadata)?;
         let Some(extent) = self.extents.remove(index) else {
             return Err(ExtentHeapError::MissingExtent);
         };
