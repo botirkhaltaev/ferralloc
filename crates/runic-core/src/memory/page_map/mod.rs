@@ -80,26 +80,6 @@ impl PageMap {
         self.insert(range, PageOwner::Run(run))
     }
 
-    /// Removes a previously published run range.
-    ///
-    /// Symmetric with [`Self::publish_run`] for API completeness. Unused outside
-    /// tests today: `RunHeap` never removes a live run from its arena, since
-    /// empty-run reclaim is not implemented yet (see `memory/AGENTS.md`). Keep
-    /// this method ready for that reclaim path instead of dropping the symmetry.
-    #[allow(
-        dead_code,
-        reason = "no caller until empty-run reclaim lands; see memory/AGENTS.md"
-    )]
-    pub(crate) fn unpublish_run(
-        &self,
-        range: AddressRange,
-        run: NonNull<Run>,
-    ) -> Result<(), PageMapError> {
-        let _writer = self.writer.lock();
-        let range = PageRange::new(range.base(), range.len()).ok_or(PageMapError::InvalidRange)?;
-        self.remove(range, PageOwner::Run(run))
-    }
-
     pub(crate) fn publish_extent(
         &self,
         range: AddressRange,

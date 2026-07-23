@@ -7,7 +7,7 @@ Memory modules own address ranges, OS mappings, and page-indexed pointer lookup.
 - `address.rs`: address ranges and pointer offset checks.
 - `os.rs`: mmap/munmap ownership (`Mapping`) and page-size helpers (`OsMemory`).
 - `page_map/`: page-indexed lookup from user pointers to `PageOwner` metadata pointers.
-  - `mod.rs`: `PageMap` public API (`publish_run`/`unpublish_run`, `publish_extent`/`unpublish_extent`, `get`) and insert/remove orchestration.
+  - `mod.rs`: `PageMap` public API (`publish_run`, `publish_extent`/`unpublish_extent`, `get`) and insert/remove orchestration.
   - `entry.rs`: `MapEntry`, the compact tagged-pointer encoding stored per page.
   - `page.rs`: page/index arithmetic and per-L1-table range segmentation.
   - `table.rs`: `L1Table`/`L1Entry`/`L2Table`, the two-level table storage.
@@ -27,4 +27,4 @@ Memory modules own address ranges, OS mappings, and page-indexed pointer lookup.
 
 - No opaque `PageOwner` pointer: it stays a concrete `Run`/`Extent` enum since every caller immediately needs the typed pointer.
 - No denser `L1Table`: the table spans the full 48-bit address space and depends on OS lazy paging; not revisited without profiling data.
-- `AllocatorCore` is self-hosted: it is constructed inside the `Mapping` it stores as its own last field, so dropping it in place unmaps its own backing memory through ordinary field-drop order. There is no raw `OsMemory::unmap` call left in the crate.
+- `AllocatorInner` is self-hosted: it is constructed inside the `Mapping` it stores as its own last field (`_storage`), so dropping it in place unmaps its own backing memory through ordinary field-drop order. There is no raw `OsMemory::unmap` call left in the crate.
