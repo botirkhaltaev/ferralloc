@@ -1,8 +1,10 @@
 use std::{alloc::GlobalAlloc, env, process::Command};
 
-use runic::{Budget, ExtentPolicy, ExtentReuse, RunicAlloc};
+use runic::{Budget, ExtentPolicy, RunicAlloc};
 use runic_bench::{allocator_target::AllocatorTarget, rss::RssReport, workload};
 
+// Extent policy grid: `Keep` + exact-length reuse is the only retained-mapping
+// story; `Drop` compares against unretained churn. See heap/extent/README.md.
 static EXTENT_DROP: RunicAlloc = RunicAlloc::builder()
     .extent()
     .policy(ExtentPolicy::Drop)
@@ -10,24 +12,16 @@ static EXTENT_DROP: RunicAlloc = RunicAlloc::builder()
     .done()
     .build();
 static EXTENT_KEEP_16M: RunicAlloc = RunicAlloc::new();
-static EXTENT_FIFO_16M: RunicAlloc = RunicAlloc::builder()
+static EXTENT_KEEP_TIGHT_BUDGET: RunicAlloc = RunicAlloc::builder()
     .extent()
-    .policy(ExtentPolicy::Fifo)
-    .budget(Budget::new(32, 16 * 1024 * 1024))
-    .done()
-    .build();
-static EXTENT_FIFO_BEST_FIT_16M: RunicAlloc = RunicAlloc::builder()
-    .extent()
-    .policy(ExtentPolicy::Fifo)
-    .reuse(ExtentReuse::BestFit)
-    .budget(Budget::new(32, 16 * 1024 * 1024))
+    .policy(ExtentPolicy::Keep)
+    .budget(Budget::new(2, 512 * 1024))
     .done()
     .build();
 const CONFIGS: &[PolicyConfig] = &[
     PolicyConfig::new("extent_drop", &EXTENT_DROP),
     PolicyConfig::new("extent_keep_16m", &EXTENT_KEEP_16M),
-    PolicyConfig::new("extent_fifo_16m", &EXTENT_FIFO_16M),
-    PolicyConfig::new("extent_fifo_best_fit_16m", &EXTENT_FIFO_BEST_FIT_16M),
+    PolicyConfig::new("extent_keep_tight_budget", &EXTENT_KEEP_TIGHT_BUDGET),
 ];
 
 const WORKLOADS: &[PolicyWorkload] = &[

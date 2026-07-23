@@ -1,6 +1,6 @@
 use core::alloc::{GlobalAlloc, Layout};
 
-use runic_core::{Allocator, AllocatorConfig, Budget, ExtentPolicy, ExtentReuse};
+use runic_core::{Allocator, AllocatorConfig, Budget, ExtentPolicy};
 
 pub struct RunicAlloc {
     allocator: Allocator,
@@ -68,12 +68,6 @@ impl ExtentBuilder {
     #[must_use]
     pub const fn policy(mut self, policy: ExtentPolicy) -> Self {
         self.builder.config = self.builder.config.with_extent_policy(policy);
-        self
-    }
-
-    #[must_use]
-    pub const fn reuse(mut self, reuse: ExtentReuse) -> Self {
-        self.builder.config = self.builder.config.with_extent_reuse(reuse);
         self
     }
 

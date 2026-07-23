@@ -255,7 +255,7 @@ In scope:
 
 ```text
 AllocatorConfig and ExtentConfig
-ExtentPolicy and ExtentReuse
+ExtentPolicy::{Drop, Keep} with exact-length reuse
 ExtentCache fixed-slot storage
 policy_grid benchmark coverage
 page-map publication/removal invariants for cached mappings

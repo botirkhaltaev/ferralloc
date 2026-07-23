@@ -80,6 +80,31 @@ fn allocator_zeroes_memory_after_local_small_fast_path_is_ready() {
 }
 
 #[test]
+fn allocator_zeroes_large_memory_after_local_fast_path_reuses_cached_mapping() {
+    let allocator = Allocator::new();
+    let layout = Layout::from_size_align(128 * 1024, 4096).unwrap();
+
+    let seed = unsafe { allocator.alloc(layout) };
+    assert!(!seed.is_null());
+    unsafe {
+        seed.write(0xab);
+        seed.add(layout.size() - 1).write(0xcd);
+    }
+    unsafe { allocator.dealloc(seed, layout) };
+
+    // Same-thread extent alloc/free should flow through the TLS fast path and
+    // reuse the mapping just released into the heap-local extent cache.
+    let ptr = unsafe { allocator.alloc_zeroed(layout) };
+    assert!(!ptr.is_null());
+    assert_eq!(ptr, seed);
+
+    let bytes = unsafe { core::slice::from_raw_parts(ptr, layout.size()) };
+    assert!(bytes.iter().all(|&byte| byte == 0));
+
+    unsafe { allocator.dealloc(ptr, layout) };
+}
+
+#[test]
 fn allocator_realloc_preserves_prefix() {
     let allocator = Allocator::new();
     let old = Layout::from_size_align(32, 8).unwrap();
@@ -398,6 +423,29 @@ fn allocator_supports_scoped_threaded_use() {
 fn allocator_frees_thread_owned_small_allocation_after_owner_thread_exits() {
     let allocator = Allocator::new();
     let layout = Layout::from_size_align(64, 8).unwrap();
+
+    let ptr = thread::scope(|scope| {
+        let allocator = &allocator;
+        scope
+            .spawn(move || {
+                let ptr = unsafe { allocator.alloc(layout) };
+                assert!(!ptr.is_null());
+                unsafe { ptr.write(0x5a) };
+                ptr.addr()
+            })
+            .join()
+            .unwrap()
+    });
+
+    let ptr = ptr as *mut u8;
+    assert_eq!(unsafe { ptr.read() }, 0x5a);
+    unsafe { allocator.dealloc(ptr, layout) };
+}
+
+#[test]
+fn allocator_frees_thread_owned_large_allocation_after_owner_thread_exits() {
+    let allocator = Allocator::new();
+    let layout = Layout::from_size_align(128 * 1024, 4096).unwrap();
 
     let ptr = thread::scope(|scope| {
         let allocator = &allocator;

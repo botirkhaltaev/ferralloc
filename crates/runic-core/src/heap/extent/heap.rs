@@ -104,32 +104,8 @@ impl ExtentHeap {
         ptr: NonNull<u8>,
         pages: &PageMap,
     ) -> Result<(), ExtentHeapError> {
-        let (id, range) = {
-            // SAFETY: PageMap stores only pointers published from this allocator's live arena.
-            let extent = unsafe { extent_ptr.as_ref() };
-            extent
-                .validate_remote_pending()
-                .map_err(ExtentHeapError::from)?;
-            extent.validate_free(ptr).map_err(ExtentHeapError::from)?;
-
-            (extent.id(), extent.mapping_range())
-        };
-
-        pages
-            .unpublish_extent(range, extent_ptr)
-            .map_err(|_| ExtentHeapError::InvalidMetadata)?;
-
-        let index = usize::try_from(id.index()).map_err(|_| ExtentHeapError::InvalidMetadata)?;
-        let Some(extent) = self.extents.remove(index) else {
-            return Err(ExtentHeapError::MissingExtent);
-        };
-
-        let mapping = extent.into_mapping();
-        if let Err(mapping) = self.cache.insert(mapping) {
-            drop(mapping);
-        }
-
-        Ok(())
+        Self::validate_remote_free(extent_ptr, ptr)?;
+        self.retire(extent_ptr, pages)
     }
 
     pub(crate) fn free(
@@ -138,16 +114,42 @@ impl ExtentHeap {
         ptr: NonNull<u8>,
         pages: &PageMap,
     ) -> Result<(), ExtentHeapError> {
-        let (id, range) = {
-            // SAFETY: PageMap stores only pointers published from this allocator's live arena.
-            let extent = unsafe { extent_ptr.as_ref() };
+        // SAFETY: PageMap stores only pointers published from this allocator's live arena.
+        unsafe { extent_ptr.as_ref() }
+            .free(ptr)
+            .map_err(ExtentHeapError::from)?;
+        self.retire(extent_ptr, pages)
+    }
 
-            if let Err(error) = extent.free(ptr) {
-                return Err(ExtentHeapError::from(error));
-            }
+    /// Validate a remote-pending free before the shared retire path.
+    ///
+    /// The remote-free protocol already transitioned the extent to
+    /// `RemotePending` via `claim_free`; this only confirms that state and the
+    /// exact pointer before the entry is torn down.
+    fn validate_remote_free(
+        extent_ptr: NonNull<Extent>,
+        ptr: NonNull<u8>,
+    ) -> Result<(), ExtentHeapError> {
+        // SAFETY: PageMap stores only pointers published from this allocator's live arena.
+        let extent = unsafe { extent_ptr.as_ref() };
+        extent
+            .validate_remote_pending()
+            .map_err(ExtentHeapError::from)?;
+        extent.validate_free(ptr).map_err(ExtentHeapError::from)?;
+        Ok(())
+    }
 
-            (extent.id(), extent.mapping_range())
-        };
+    /// One retire path shared by local and remote-completed frees: unpublish the
+    /// page-map entry, remove the arena slot, and offer the mapping to the cache.
+    fn retire(
+        &mut self,
+        extent_ptr: NonNull<Extent>,
+        pages: &PageMap,
+    ) -> Result<(), ExtentHeapError> {
+        // SAFETY: PageMap stores only pointers published from this allocator's live arena.
+        let extent = unsafe { extent_ptr.as_ref() };
+        let id = extent.id();
+        let range = extent.mapping_range();
 
         pages
             .unpublish_extent(range, extent_ptr)
